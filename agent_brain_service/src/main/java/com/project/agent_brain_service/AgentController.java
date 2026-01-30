@@ -2,7 +2,9 @@ package com.project.agent_brain_service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.agent_brain_service.controller.FakeSwiggyController;
+
+// ✅ IMPORT THE CONTROLLER CORRECTLY
+import com.project.agent_brain_service.controller.FakeSwiggyController; 
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,7 +22,6 @@ public class AgentController {
     @Autowired
     private UserProfileService userProfileService;
     
-    // Injecting the "Body" (Fake Swiggy) into the "Brain"
     @Autowired
     private FakeSwiggyController fakeSwiggyController; 
 
@@ -36,26 +37,33 @@ public class AgentController {
             // 1. Get Context
             UserProfile profile = userProfileService.getUserProfile(userId);
             String userProfileJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(profile);
+            String validMenu = String.join(", ", FakeSwiggyController.getMenuItems());
 
-            // 2. Build Prompt
+            // 2. 🧠 THE CONFIDENCE PROMPT
             String systemPrompt = """
                 You are 'Foodie-Bot'.
-                CURRENT USER DATA (JSON): %s
+                VALID MENU: [%s]
+                USER DATA: %s
                 
-                RULES:
-                1. If user confirms an order (e.g., "Yes", "Order it"), set "intent" to "order".
-                2. If "intent" is "order", you MUST output the exact food name in "suggested_item".
-                3. Reply in JSON.
+                CONFIDENCE RULES:
+                - Explicit "Order X" -> Confidence 100.
+                - "I'm hungry" + Clear History -> Confidence 85-95.
+                - Vague request -> Confidence 50.
                 
-                OUTPUT FORMAT:
+                DECISION RULES:
+                1. Confidence > 85 -> Set "intent" to "order" (AUTO-PILOT).
+                2. Confidence < 85 -> Set "intent" to "chat".
+                
+                OUTPUT JSON:
                 {
                     "intent": "chat" OR "order",
+                    "confidence": 0-100,
                     "reasoning": "...",
-                    "suggested_item": "Food Name",
+                    "suggested_item": "Exact Menu Item Name",
                     "message": "..."
                 }
                 USER SAYS: 
-                """.formatted(userProfileJson);
+                """.formatted(validMenu, userProfileJson);
 
             // 3. Call Gemini
             String finalPrompt = systemPrompt + question;
@@ -66,29 +74,36 @@ public class AgentController {
             String googleUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey;
             String rawJson = restClient.post().uri(googleUrl).header("Content-Type", "application/json").body(jsonBody).retrieve().body(String.class);
 
-            // 4. Parse Gemini Response
+            // 4. Parse Response
             JsonNode root = objectMapper.readTree(rawJson);
             String aiText = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
             String cleanJson = aiText.replace("```json", "").replace("```", "").trim();
-            
-            // Convert JSON string -> Java Object (AgentResponse)
             AgentResponse response = objectMapper.readValue(cleanJson, AgentResponse.class);
 
-            // --- 🤖 AGENTIC EXECUTION LAYER 🤖 ---
-            // This is where the machine takes action!
+            // --- 🤖 EXECUTION & LEARNING LAYER 🤖 ---
             if ("order".equalsIgnoreCase(response.intent) && response.suggestedItem != null) {
                 
-                System.out.println("🚀 AGENT DECIDED TO ORDER: " + response.suggestedItem);
-                
-                // A. Call Swiggy API (The Body)
+                // A. Execute Order
                 String orderStatus = fakeSwiggyController.placeOrder(response.suggestedItem);
                 
-                // B. Update User Memory (The Learning)
-                // We assume a price of 500 for now, or fetch from Swiggy menu in a real app
-                userProfileService.updateUserStats(userId, 500.0, "Italian"); // Example update
+                // B. Fetch REAL Data for Learning (This is what caused the error before!)
+                MenuItem itemDetails = fakeSwiggyController.getItemDetails(response.suggestedItem);
                 
-                // C. Update the message to the user
-                response.message = response.message + " [SYSTEM: " + orderStatus + "]";
+                if (itemDetails != null) {
+                    // C. Update Profile with REAL Price and Cuisine
+                    // (Assuming $1 = 80 INR for this simulation)
+                    double paidAmountINR = itemDetails.price * 80;
+                    userProfileService.updateUserStats(userId, paidAmountINR, itemDetails.cuisine);
+                    
+                    System.out.println("🧠 LEARNED: User ate " + itemDetails.cuisine + " for " + paidAmountINR + " INR");
+                }
+
+                // D. Message Handling
+                if (response.confidence > 85 && !question.toLowerCase().contains("order")) {
+                    response.message = "[AUTO-PILOT 🤖] Confidence " + response.confidence + "%. " + response.message + " " + orderStatus;
+                } else {
+                    response.message = response.message + " " + orderStatus;
+                }
             }
             
             return response;
