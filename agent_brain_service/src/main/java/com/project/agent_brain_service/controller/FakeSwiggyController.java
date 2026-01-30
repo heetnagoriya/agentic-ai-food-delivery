@@ -14,11 +14,11 @@ public class FakeSwiggyController {
     private static final Map<String, MenuItem> MENU = new HashMap<>();
     
     static {
-        MENU.put("pizza", new MenuItem(12.99, "Italian"));
-        MENU.put("burger", new MenuItem(8.50, "Fast Food"));
-        MENU.put("sushi", new MenuItem(15.00, "Japanese"));
-        MENU.put("pasta", new MenuItem(10.00, "Italian"));
-        MENU.put("salad", new MenuItem(7.00, "Healthy"));
+        // Pizza is 600. If User Budget is 500, they CANNOT buy this without a coupon.
+        MENU.put("pizza", new MenuItem(600.00, "Italian")); 
+        MENU.put("burger", new MenuItem(150.50, "Fast Food"));
+        MENU.put("sushi", new MenuItem(1200.00, "Japanese"));
+        MENU.put("pasta", new MenuItem(450.00, "Italian"));
     }
 
     public static Set<String> getMenuItems() {

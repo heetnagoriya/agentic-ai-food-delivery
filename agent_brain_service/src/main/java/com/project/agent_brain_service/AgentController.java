@@ -2,10 +2,7 @@ package com.project.agent_brain_service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-// ✅ IMPORT THE CONTROLLER CORRECTLY
 import com.project.agent_brain_service.controller.FakeSwiggyController; 
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +21,9 @@ public class AgentController {
     
     @Autowired
     private FakeSwiggyController fakeSwiggyController; 
+    
+    @Autowired
+    private CouponService couponService; 
 
     private final RestClient restClient = RestClient.builder().build();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -34,36 +34,47 @@ public class AgentController {
             @RequestParam(value = "question", defaultValue = "I am hungry") String question) {
         
         try {
-            // 1. Get Context
+            // 1. Gather Context
             UserProfile profile = userProfileService.getUserProfile(userId);
             String userProfileJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(profile);
             String validMenu = String.join(", ", FakeSwiggyController.getMenuItems());
+            
+            // Get Coupon Info
+            String bestCoupon = couponService.getBestCoupon(); 
+            double discount = couponService.getDiscountPercentage(bestCoupon) * 100;
 
-            // 2. 🧠 THE CONFIDENCE PROMPT
+            // 2. 🧠 SYSTEM PROMPT (FIXED THE % BUG HERE)
             String systemPrompt = """
-                You are 'Foodie-Bot'.
-                VALID MENU: [%s]
-                USER DATA: %s
+                You are 'Foodie-Bot'. 
                 
-                CONFIDENCE RULES:
-                - Explicit "Order X" -> Confidence 100.
-                - "I'm hungry" + Clear History -> Confidence 85-95.
-                - Vague request -> Confidence 50.
+                CONTEXT:
+                - Valid Menu: [%s]
+                - Available Coupon: Code '%s' gives %.0f%% OFF.
+                - User Profile: %s
                 
-                DECISION RULES:
-                1. Confidence > 85 -> Set "intent" to "order" (AUTO-PILOT).
-                2. Confidence < 85 -> Set "intent" to "chat".
+                YOUR JOB (STEP-BY-STEP REASONING):
+                1. Identify what the user likely wants.
+                2. Check the price (Pizza is 600, Pasta is 450).
+                3. Compare Price vs User's Budget.
+                4. CRITICAL: If Price > Budget, APPLY the Coupon math (Price - 20%%).
+                5. If (Price - Coupon) < Budget, then you CAN order it.
+                
+                CONFIDENCE SCORING:
+                - If within budget (or made affordable by coupon) + User Likes it -> Score 90+.
+                - If still too expensive -> Score 0-10.
                 
                 OUTPUT JSON:
                 {
                     "intent": "chat" OR "order",
                     "confidence": 0-100,
-                    "reasoning": "...",
-                    "suggested_item": "Exact Menu Item Name",
+                    "reasoning": "Show math. E.g. '600 is too high, but with 20%% off it becomes 480'",
+                    "suggested_item": "Item Name",
+                    "coupon_code": "Code used or null",
+                    "final_price": "Calculated price",
                     "message": "..."
                 }
                 USER SAYS: 
-                """.formatted(validMenu, userProfileJson);
+                """.formatted(validMenu, bestCoupon, discount, userProfileJson);
 
             // 3. Call Gemini
             String finalPrompt = systemPrompt + question;
@@ -74,33 +85,30 @@ public class AgentController {
             String googleUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey;
             String rawJson = restClient.post().uri(googleUrl).header("Content-Type", "application/json").body(jsonBody).retrieve().body(String.class);
 
-            // 4. Parse Response
             JsonNode root = objectMapper.readTree(rawJson);
             String aiText = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
             String cleanJson = aiText.replace("```json", "").replace("```", "").trim();
             AgentResponse response = objectMapper.readValue(cleanJson, AgentResponse.class);
 
-            // --- 🤖 EXECUTION & LEARNING LAYER 🤖 ---
+            // --- 🤖 EXECUTION LOGIC ---
             if ("order".equalsIgnoreCase(response.intent) && response.suggestedItem != null) {
                 
-                // A. Execute Order
                 String orderStatus = fakeSwiggyController.placeOrder(response.suggestedItem);
                 
-                // B. Fetch REAL Data for Learning (This is what caused the error before!)
                 MenuItem itemDetails = fakeSwiggyController.getItemDetails(response.suggestedItem);
-                
                 if (itemDetails != null) {
-                    // C. Update Profile with REAL Price and Cuisine
-                    // (Assuming $1 = 80 INR for this simulation)
-                    double paidAmountINR = itemDetails.price * 80;
-                    userProfileService.updateUserStats(userId, paidAmountINR, itemDetails.cuisine);
+                    double paidAmount = itemDetails.price; 
                     
-                    System.out.println("🧠 LEARNED: User ate " + itemDetails.cuisine + " for " + paidAmountINR + " INR");
+                    // Apply coupon discount if the AI used one
+                    if (response.couponCode != null && !response.couponCode.equals("null")) {
+                        paidAmount = paidAmount - (paidAmount * couponService.getDiscountPercentage(response.couponCode));
+                    }
+                    
+                    userProfileService.updateUserStats(userId, paidAmount, itemDetails.cuisine);
                 }
 
-                // D. Message Handling
-                if (response.confidence > 85 && !question.toLowerCase().contains("order")) {
-                    response.message = "[AUTO-PILOT 🤖] Confidence " + response.confidence + "%. " + response.message + " " + orderStatus;
+                if (response.confidence > 85) {
+                    response.message = "[AUTO-PILOT 🤖] Used Coupon " + response.couponCode + "! " + response.message + " " + orderStatus;
                 } else {
                     response.message = response.message + " " + orderStatus;
                 }
@@ -110,9 +118,9 @@ public class AgentController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            AgentResponse errorResponse = new AgentResponse();
-            errorResponse.message = "Error: " + e.getMessage();
-            return errorResponse;
+            AgentResponse error = new AgentResponse();
+            error.message = "🚨 ERROR: " + e.getMessage();
+            return error;
         }
     }
 }

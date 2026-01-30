@@ -3,14 +3,18 @@ package com.project.agent_brain_service;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class AgentResponse {
-    public String intent;           // "chat" or "order"
+    public String intent;
     public String reasoning;
     
     @JsonProperty("suggested_item")
     public String suggestedItem;
     
-    public String message;
+    @JsonProperty("coupon_code")
+    public String couponCode;    // 🆕 The Agent tells us which coupon it used
     
-    // 🆕 NEW FIELD: The Confidence Score (0-100)
+    @JsonProperty("final_price")
+    public double finalPrice;    // 🆕 The price after math
+    
+    public String message;
     public int confidence; 
 }
