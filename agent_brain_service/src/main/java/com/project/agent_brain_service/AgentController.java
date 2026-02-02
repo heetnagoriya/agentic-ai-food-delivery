@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 public class AgentController {
@@ -28,99 +30,114 @@ public class AgentController {
     private final RestClient restClient = RestClient.builder().build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // 1. THE ANALYST (Extracts Search Terms)
+    private String extractSearchKeyword(String userQuestion) {
+        try {
+            String prompt = "Extract the FOOD ITEM or INTENT from: '" + userQuestion + "'. Output STRICTLY ONE WORD. If vague, output 'Top Rated'.";
+            String jsonBody = "{ \"contents\": [{ \"parts\": [{\"text\": \"" + prompt + "\"}] }] }";
+            String googleUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey;
+            String rawJson = restClient.post().uri(googleUrl).header("Content-Type", "application/json").body(jsonBody).retrieve().body(String.class);
+            JsonNode root = objectMapper.readTree(rawJson);
+            return root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText().trim();
+        } catch (Exception e) { return "Pizza"; }
+    }
+
     @GetMapping("/ask")
     public AgentResponse askAgent(
             @RequestParam(value = "userId", defaultValue = "user_123") String userId,
             @RequestParam(value = "question", defaultValue = "I am hungry") String question) {
         
         try {
-            // 1. Gather Context
+            // Context
             UserProfile profile = userProfileService.getUserProfile(userId);
             String userProfileJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(profile);
-            String validMenu = String.join(", ", FakeSwiggyController.getMenuItems());
-            
-            // Get Coupon Info
             String bestCoupon = couponService.getBestCoupon(); 
-            double discount = couponService.getDiscountPercentage(bestCoupon) * 100;
+            
+            // 🛡️ SAFELY CONVERT DISCOUNT TO STRING (Fixes the crash)
+            double discountVal = couponService.getDiscountPercentage(bestCoupon) * 100;
+            String discountStr = String.valueOf((int) discountVal); // "20"
+            
+            String lastOrderId = fakeSwiggyController.getLastOrderId();
+            if (lastOrderId == null) lastOrderId = "None";
 
-            // 2. 🧠 SYSTEM PROMPT (FIXED THE % BUG HERE)
+            // Search Logic
+            String smartKeyword = extractSearchKeyword(question);
+            if (smartKeyword.equalsIgnoreCase("Top Rated")) smartKeyword = ""; 
+            List<Map<String, Object>> searchResults = fakeSwiggyController.searchFood(smartKeyword);
+            String searchResultsJson = objectMapper.writeValueAsString(searchResults);
+
+            // 🧠 2. THE ROBUST PROMPT (Uses %s for everything now)
             String systemPrompt = """
-                You are 'Foodie-Bot'. 
+                You are 'Foodie-Bot', an intelligent agent.
                 
-                CONTEXT:
-                - Valid Menu: [%s]
-                - Available Coupon: Code '%s' gives %.0f%% OFF.
-                - User Profile: %s
+                SEARCH: "%s" -> RESULT: %s
+                USER PROFILE: %s
+                COUPON: %s (%s%% OFF)
+                LAST ORDER ID: %s
                 
-                YOUR JOB (STEP-BY-STEP REASONING):
-                1. Identify what the user likely wants.
-                2. Check the price (Pizza is 600, Pasta is 450).
-                3. Compare Price vs User's Budget.
-                4. CRITICAL: If Price > Budget, APPLY the Coupon math (Price - 20%%).
-                5. If (Price - Coupon) < Budget, then you CAN order it.
+                DECISION RULES:
+                1. ANALYZE: Can user afford it? If not, check if COUPON makes it affordable.
+                2. BORDERLINE CONFIDENCE (60-80%%): If budget is tight, ASK confirmation.
+                3. HIGH CONFIDENCE (>85%%): Auto-order if explicitly asked OR clear history match.
                 
-                CONFIDENCE SCORING:
-                - If within budget (or made affordable by coupon) + User Likes it -> Score 90+.
-                - If still too expensive -> Score 0-10.
+                RESPONSE RULES:
+                - Explain WHY you made the decision.
+                - Examples: "Price was 600, but I used a coupon to make it 480."
                 
                 OUTPUT JSON:
                 {
-                    "intent": "chat" OR "order",
+                    "intent": "chat" OR "order" OR "track" OR "cancel",
                     "confidence": 0-100,
-                    "reasoning": "Show math. E.g. '600 is too high, but with 20%% off it becomes 480'",
+                    "reasoning": "Internal logic trace...",
                     "suggested_item": "Item Name",
-                    "coupon_code": "Code used or null",
-                    "final_price": "Calculated price",
-                    "message": "..."
+                    "restaurant_id": "ID",
+                    "coupon_code": "Code used",
+                    "order_id": "ID",
+                    "message": "Public response."
                 }
                 USER SAYS: 
-                """.formatted(validMenu, bestCoupon, discount, userProfileJson);
+                """.formatted(smartKeyword, searchResultsJson, userProfileJson, bestCoupon, discountStr, lastOrderId);
 
-            // 3. Call Gemini
             String finalPrompt = systemPrompt + question;
             String jsonBody = """
                 { "contents": [{ "parts": [{"text": "%s"}] }] }
                 """.formatted(finalPrompt.replace("\n", "\\n").replace("\"", "\\\""));
-                
+            
             String googleUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey;
             String rawJson = restClient.post().uri(googleUrl).header("Content-Type", "application/json").body(jsonBody).retrieve().body(String.class);
 
             JsonNode root = objectMapper.readTree(rawJson);
-            String aiText = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
-            String cleanJson = aiText.replace("```json", "").replace("```", "").trim();
+            String cleanJson = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText().replace("```json", "").replace("```", "").trim();
             AgentResponse response = objectMapper.readValue(cleanJson, AgentResponse.class);
 
-            // --- 🤖 EXECUTION LOGIC ---
+            // --- 🤖 EXECUTION ---
             if ("order".equalsIgnoreCase(response.intent) && response.suggestedItem != null) {
+                String orderStatus = fakeSwiggyController.placeOrder(response.restaurantId, response.suggestedItem);
                 
-                String orderStatus = fakeSwiggyController.placeOrder(response.suggestedItem);
+                MenuItem details = fakeSwiggyController.getItemDetails(response.restaurantId, response.suggestedItem);
+                if (details != null) {
+                    double paid = details.price;
+                    if (response.couponCode != null) paid -= (paid * couponService.getDiscountPercentage(response.couponCode));
+                    userProfileService.updateUserStats(userId, paid, details.cuisine);
+                }
                 
-                MenuItem itemDetails = fakeSwiggyController.getItemDetails(response.suggestedItem);
-                if (itemDetails != null) {
-                    double paidAmount = itemDetails.price; 
-                    
-                    // Apply coupon discount if the AI used one
-                    if (response.couponCode != null && !response.couponCode.equals("null")) {
-                        paidAmount = paidAmount - (paidAmount * couponService.getDiscountPercentage(response.couponCode));
-                    }
-                    
-                    userProfileService.updateUserStats(userId, paidAmount, itemDetails.cuisine);
-                }
-
-                if (response.confidence > 85) {
-                    response.message = "[AUTO-PILOT 🤖] Used Coupon " + response.couponCode + "! " + response.message + " " + orderStatus;
-                } else {
-                    response.message = response.message + " " + orderStatus;
-                }
+                if (response.confidence > 85) response.message = "🚀 [AUTO-PILOT ACTIVE] " + response.message + "\n\n" + orderStatus;
+                else response.message = response.message + "\n\n" + orderStatus;
             }
-            
-            return response;
+            else if ("track".equalsIgnoreCase(response.intent)) {
+                if (response.orderId != null) response.message += "\n" + fakeSwiggyController.getOrderStatus(response.orderId);
+                else response.message = "I couldn't find that order ID.";
+            } else if ("cancel".equalsIgnoreCase(response.intent)) {
+                if (response.orderId != null) response.message += "\n" + fakeSwiggyController.cancelOrder(response.orderId);
+                else response.message = "I couldn't find an order to cancel.";
+            }
 
+            return response;
         } catch (Exception e) {
             e.printStackTrace();
-            AgentResponse error = new AgentResponse();
-            error.message = "🚨 ERROR: " + e.getMessage();
-            return error;
+            AgentResponse err = new AgentResponse();
+            err.message = "🚨 Error: " + e.getMessage();
+            return err;
         }
     }
 }

@@ -8,6 +8,12 @@ public class AgentResponse {
     
     @JsonProperty("suggested_item")
     public String suggestedItem;
+
+    @JsonProperty("order_id")
+    public String orderId;
+
+    @JsonProperty("restaurant_id")
+    public String restaurantId;
     
     @JsonProperty("coupon_code")
     public String couponCode;    // 🆕 The Agent tells us which coupon it used

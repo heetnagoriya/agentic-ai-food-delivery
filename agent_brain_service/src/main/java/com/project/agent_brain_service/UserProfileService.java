@@ -15,34 +15,36 @@ public class UserProfileService {
         // Initialize your Tier-1 User (User 123)
         UserProfile u1 = new UserProfile("user_123");
         
-        u1.preferences.cuisines.addAll(List.of("Italian", "Fast Food"));
-        u1.preferences.likes.add("Spicy Pizza");
-        u1.preferences.allergies.add("Peanuts");
-        
-        u1.budget.rangeMin = 400;
-        u1.budget.rangeMax = 800;
-        u1.budget.confidenceLevel = "high";
-        
-        u1.orderingBehavior.avgOrderValue = 650;
-        u1.orderingBehavior.totalOrders = 10; // Assume they ordered 10 times before
+        // Ensure these lists are initialized in UserProfile class, or we add checks
+        if (u1.preferences != null) {
+            u1.preferences.cuisines.addAll(List.of("Italian", "Fast Food"));
+            u1.preferences.likes.add("Spicy Pizza");
+            u1.preferences.allergies.add("Peanuts");
+            
+            u1.budget.rangeMin = 400;
+            u1.budget.rangeMax = 800;
+            u1.budget.confidenceLevel = "high";
+            
+            u1.orderingBehavior.avgOrderValue = 650;
+            u1.orderingBehavior.totalOrders = 10;
+        }
         
         MOCK_DB.put("user_123", u1);
     }
 
-    // 1. READ: Get the complex profile
+    // 1. READ
     public UserProfile getUserProfile(String userId) {
         return MOCK_DB.getOrDefault(userId, new UserProfile(userId));
     }
 
-    // 2. WRITE: The "Learning" Logic (Your specific request!)
+    // 2. WRITE: The "Learning" Logic
     public void updateUserStats(String userId, double newOrderAmount, String newCuisine) {
         UserProfile user = getUserProfile(userId);
 
         // A. Dynamic Learning: Update Average Order Value
-        // Formula: ((Old_Avg * Total) + New_Price) / (Total + 1)
         double currentTotal = user.orderingBehavior.avgOrderValue * user.orderingBehavior.totalOrders;
         double newTotal = currentTotal + newOrderAmount;
-        user.orderingBehavior.totalOrders++; // Increment count
+        user.orderingBehavior.totalOrders++; 
         user.orderingBehavior.avgOrderValue = newTotal / user.orderingBehavior.totalOrders;
 
         // B. Dynamic Learning: Add new cuisine if not present
@@ -53,5 +55,15 @@ public class UserProfileService {
         // Save back to "DB"
         MOCK_DB.put(userId, user);
         System.out.println("🧠 UPDATED PROFILE: Avg Value is now " + user.orderingBehavior.avgOrderValue);
+    }
+
+    // 3. RESET: The "Forget Me" Logic (Fixed Variable Names)
+    public void clearUserProfile(String userId) {
+        if (MOCK_DB.containsKey(userId)) {
+            // Reset to default state (Create a fresh, empty profile)
+            UserProfile cleanProfile = new UserProfile(userId);
+            MOCK_DB.put(userId, cleanProfile);
+            System.out.println("🧹 MEMORY WIPED for User: " + userId);
+        }
     }
 }

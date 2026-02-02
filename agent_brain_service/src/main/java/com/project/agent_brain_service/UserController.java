@@ -10,24 +10,15 @@ public class UserController {
     @Autowired
     private UserProfileService userProfileService;
 
-    // Endpoint to Simulate Buying Food
-    // URL: http://localhost:8080/user/buy?userId=user_123&amount=200&cuisine=Chinese
-    @PostMapping("/buy")
-    public UserProfile buyFood(
-            @RequestParam String userId,
-            @RequestParam double amount,
-            @RequestParam String cuisine) {
-        
-        // 1. Update the Memory
-        userProfileService.updateUserStats(userId, amount, cuisine);
-        
-        // 2. Return the UPDATED profile so we can see the math happen
-        return userProfileService.getUserProfile(userId);
-    }
-    
-    // Helper to just check profile without buying
     @GetMapping("/profile")
     public UserProfile getProfile(@RequestParam String userId) {
         return userProfileService.getUserProfile(userId);
+    }
+    
+    // The Dashboard calls THIS to reset memory
+    @DeleteMapping("/reset")
+    public String resetProfile(@RequestParam String userId) {
+        userProfileService.clearUserProfile(userId);
+        return "Memory Cleared for " + userId;
     }
 }
