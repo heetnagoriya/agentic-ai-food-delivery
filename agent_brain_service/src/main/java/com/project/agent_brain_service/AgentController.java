@@ -45,58 +45,65 @@ public class AgentController {
     @GetMapping("/ask")
     public AgentResponse askAgent(
             @RequestParam(value = "userId", defaultValue = "user_123") String userId,
-            @RequestParam(value = "question", defaultValue = "I am hungry") String question) {
+            @RequestParam(value = "question", defaultValue = "I am hungry") String question,
+            @RequestParam(value = "autoPilot", defaultValue = "true") boolean autoPilot) {
         
         try {
-            // Context
+            // --- CONTEXT GATHERING (THE SENSORS) ---
             UserProfile profile = userProfileService.getUserProfile(userId);
             String userProfileJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(profile);
-            String bestCoupon = couponService.getBestCoupon(); 
             
-            // 🛡️ SAFELY CONVERT DISCOUNT TO STRING (Fixes the crash)
-            double discountVal = couponService.getDiscountPercentage(bestCoupon) * 100;
-            String discountStr = String.valueOf((int) discountVal); // "20"
+            // 🆕 SENSOR 1: MONEY
+            double currentBalance = fakeSwiggyController.getWalletBalance(userId);
             
-            String lastOrderId = fakeSwiggyController.getLastOrderId();
-            if (lastOrderId == null) lastOrderId = "None";
-
-            // Search Logic
+            // 🆕 SENSOR 2: INVENTORY (Via Search)
             String smartKeyword = extractSearchKeyword(question);
             if (smartKeyword.equalsIgnoreCase("Top Rated")) smartKeyword = ""; 
             List<Map<String, Object>> searchResults = fakeSwiggyController.searchFood(smartKeyword);
             String searchResultsJson = objectMapper.writeValueAsString(searchResults);
 
-            // 🧠 2. THE ROBUST PROMPT (Uses %s for everything now)
+            // Discounts
+            String bestCoupon = couponService.getBestCoupon(); 
+            double discountVal = couponService.getDiscountPercentage(bestCoupon) * 100;
+            String discountStr = String.valueOf((int) discountVal);
+            String lastOrderId = fakeSwiggyController.getLastOrderId();
+            if (lastOrderId == null) lastOrderId = "None";
+
+            // 🧠 2. THE MNC-GRADE SYSTEM PROMPT
             String systemPrompt = """
-                You are 'Foodie-Bot', an intelligent agent.
+                You are 'Foodie-Bot', an Autonomous Agent managing a real wallet.
                 
-                SEARCH: "%s" -> RESULT: %s
-                USER PROFILE: %s
-                COUPON: %s (%s%% OFF)
-                LAST ORDER ID: %s
+                --- 🌍 WORLD STATE ---
+                💰 USER WALLET: ₹%.2f
+                🔍 SEARCH RESULTS: %s
+                👤 USER PROFILE: %s
+                🎟️ COUPON: %s (%s%% OFF)
+                ----------------------
                 
-                DECISION RULES:
-                1. ANALYZE: Can user afford it? If not, check if COUPON makes it affordable.
-                2. BORDERLINE CONFIDENCE (60-80%%): If budget is tight, ASK confirmation.
-                3. HIGH CONFIDENCE (>85%%): Auto-order if explicitly asked OR clear history match.
-                
-                RESPONSE RULES:
-                - Explain WHY you made the decision.
-                - Examples: "Price was 600, but I used a coupon to make it 480."
+                --- ⚙️ DECISION LOGIC (CONSTRAINT SATISFACTION) ---
+                1. 🛑 HARD CONSTRAINT (STOCK): If 'stock' is 0, item is UNSELLABLE. Suggest alternatives.
+                2. 🛑 HARD CONSTRAINT (MONEY): 
+                   - Calculate Final Price = (Price - Coupon).
+                   - If Final Price > WALLET BALANCE, you CANNOT order. 
+                   - Reply: "Payment would be declined. You only have ₹[Balance]."
+                3. ⚠️ SOFT CONSTRAINT (BUDGET PREFERENCE):
+                   - If Price is within Wallet but above User's preferred range, ASK before ordering.
+                4. ✅ EXECUTION:
+                   - Only 'order' if Stock > 0 AND Wallet > Price.
                 
                 OUTPUT JSON:
                 {
                     "intent": "chat" OR "order" OR "track" OR "cancel",
                     "confidence": 0-100,
-                    "reasoning": "Internal logic trace...",
+                    "reasoning": "Step-by-step math: Price 600 - Coupon 120 = 480. Wallet has 100. 480 > 100. Fail.",
                     "suggested_item": "Item Name",
                     "restaurant_id": "ID",
-                    "coupon_code": "Code used",
+                    "coupon_code": "Code used (or null)",
                     "order_id": "ID",
                     "message": "Public response."
                 }
                 USER SAYS: 
-                """.formatted(smartKeyword, searchResultsJson, userProfileJson, bestCoupon, discountStr, lastOrderId);
+                """.formatted(currentBalance, searchResultsJson, userProfileJson, bestCoupon, discountStr);
 
             String finalPrompt = systemPrompt + question;
             String jsonBody = """
@@ -110,19 +117,42 @@ public class AgentController {
             String cleanJson = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText().replace("```json", "").replace("```", "").trim();
             AgentResponse response = objectMapper.readValue(cleanJson, AgentResponse.class);
 
-            // --- 🤖 EXECUTION ---
+            // --- 🤖 EXECUTION LAYER ---
             if ("order".equalsIgnoreCase(response.intent) && response.suggestedItem != null) {
-                String orderStatus = fakeSwiggyController.placeOrder(response.restaurantId, response.suggestedItem);
                 
-                MenuItem details = fakeSwiggyController.getItemDetails(response.restaurantId, response.suggestedItem);
-                if (details != null) {
-                    double paid = details.price;
-                    if (response.couponCode != null) paid -= (paid * couponService.getDiscountPercentage(response.couponCode));
-                    userProfileService.updateUserStats(userId, paid, details.cuisine);
+                // 🛑 SAFETY CHECK: Only execute if Confidence is High AND Auto-Pilot is ON
+                if (response.confidence > 85 && autoPilot) {
+                    
+                    // 1. Calculate the Real Price to Charge (Discount Logic)
+                    MenuItem details = fakeSwiggyController.getItemDetails(response.restaurantId, response.suggestedItem);
+                    double finalPrice = details.price;
+                    
+                    if (response.couponCode != null && !response.couponCode.isEmpty()) {
+                        double discount = couponService.getDiscountPercentage(response.couponCode);
+                        finalPrice = finalPrice - (finalPrice * discount);
+                    }
+
+                    // 2. Place Order with FINAL PRICE
+                    String orderStatus = fakeSwiggyController.placeOrder(
+                        response.restaurantId, 
+                        response.suggestedItem, 
+                        userId, 
+                        finalPrice // 🆕 Sending the discounted amount to Backend
+                    );
+                    
+                    // 3. Handle Success vs Failure
+                    if (orderStatus.contains("DECLINED") || orderStatus.contains("OUT OF STOCK")) {
+                        response.message = "⚠️ TRANSACTION FAILED: " + orderStatus;
+                    } else {
+                        response.message = "🚀 [AUTO-PILOT] Transaction Successful!\n\n" + orderStatus;
+                        // Learning update
+                        userProfileService.updateUserStats(userId, finalPrice, details.cuisine);
+                    }
+                } else {
+                    // ✋ HUMAN-IN-THE-LOOP (Draft Only)
+                    response.message = "🛡️ [SAFETY MODE] " + response.message + 
+                                       "\n\n❌ Order NOT placed yet. Type 'Yes' or 'Confirm' to proceed.";
                 }
-                
-                if (response.confidence > 85) response.message = "🚀 [AUTO-PILOT ACTIVE] " + response.message + "\n\n" + orderStatus;
-                else response.message = response.message + "\n\n" + orderStatus;
             }
             else if ("track".equalsIgnoreCase(response.intent)) {
                 if (response.orderId != null) response.message += "\n" + fakeSwiggyController.getOrderStatus(response.orderId);
