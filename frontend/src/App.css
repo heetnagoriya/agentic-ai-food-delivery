@@ -1,0 +1,390 @@
+/* ═══════════════════════════════════════════
+   C.A.F.E. DASHBOARD V2 — GLOBAL STYLES
+   Clean, warm, Claude-inspired design
+   ═══════════════════════════════════════════ */
+
+:root {
+  /* Background — warm neutrals */
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #212121;
+  --bg-tertiary: #2a2a2a;
+  --bg-card: #2f2f2f;
+  --bg-card-hover: #383838;
+  --bg-input: #252525;
+  --bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* Accent — warm terracotta (Claude-inspired) */
+  --accent-primary: #d97756;
+  --accent-primary-hover: #c4684a;
+  --accent-primary-subtle: rgba(217, 119, 86, 0.12);
+  --accent-primary-text: rgba(217, 119, 86, 0.9);
+  --accent-secondary: #e8a87c;
+  --accent-success: #5bb98b;
+  --accent-success-subtle: rgba(91, 185, 139, 0.12);
+  --accent-warning: #e5a84b;
+  --accent-warning-subtle: rgba(229, 168, 75, 0.12);
+  --accent-danger: #d9534f;
+  --accent-danger-subtle: rgba(217, 83, 79, 0.12);
+
+  /* Extended accent palette (used by StatePanel) */
+  --accent-emerald: #34d399;
+  --accent-indigo: #6366f1;
+  --accent-cyan: #22d3ee;
+  --accent-amber: #f59e0b;
+  --accent-red: #ef4444;
+
+  /* Gradients (used by StatePanel cards) */
+  --gradient-surge: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.08) 100%);
+  --gradient-wallet: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.06) 100%);
+  --gradient-text: linear-gradient(135deg, #818cf8, #c084fc);
+
+  /* Glass effects */
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-blur: blur(12px);
+
+  /* Text */
+  --text-primary: #ececec;
+  --text-secondary: #a3a3a3;
+  --text-muted: #6b6b6b;
+  --text-inverse: #1a1a1a;
+
+  /* Borders */
+  --border-subtle: #333333;
+  --border-default: #3d3d3d;
+  --border-hover: #555555;
+
+  /* Typography */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 0.12s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.35s ease;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* ─── Reset ─── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+/* ─── App Layout (2-column: sidebar + chat) ─── */
+.app {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.main-chat {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+/* ─── Toast System ─── */
+.toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  color: var(--text-primary);
+  pointer-events: all;
+  cursor: pointer;
+  animation: toastIn 0.35s ease-out;
+  max-width: 400px;
+}
+
+.toast-error {
+  border-left: 3px solid var(--accent-danger);
+}
+
+.toast-success {
+  border-left: 3px solid var(--accent-success);
+}
+
+.toast-info {
+  border-left: 3px solid var(--accent-primary);
+}
+
+.toast-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.toast-message {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color var(--transition-fast);
+}
+
+.toast-close:hover {
+  color: var(--text-primary);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ─── Badges ─── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-default {
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary);
+}
+
+.badge-green {
+  background: var(--accent-success-subtle);
+  color: var(--accent-success);
+}
+
+.badge-red {
+  background: var(--accent-danger-subtle);
+  color: var(--accent-danger);
+}
+
+.badge-amber {
+  background: var(--accent-warning-subtle);
+  color: var(--accent-warning);
+}
+
+/* ─── Surge Toggle Button ─── */
+.surge-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-md);
+  color: #fca5a5;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  letter-spacing: 0.3px;
+}
+
+.surge-toggle-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  transform: translateY(-1px);
+}
+
+.surge-disable-btn {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fca5a5;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.surge-disable-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.surge-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+/* ─── State Panel Mobile Toggle ─── */
+.state-panel-mobile-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 200;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.state-panel-mobile-toggle:hover {
+  transform: scale(1.1);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* ─── Mobile Tabs ─── */
+.mobile-tabs {
+  display: none;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 1199px) {
+  .state-panel-mobile-toggle {
+    display: flex;
+  }
+}
+
+@media (min-width: 1200px) {
+  .state-panel-mobile-toggle {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .mobile-tabs {
+    display: flex;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+    z-index: 50;
+  }
+
+  .mobile-tab {
+    flex: 1;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: center;
+  }
+
+  .mobile-tab-active {
+    color: var(--accent-primary);
+    border-bottom-color: var(--accent-primary);
+  }
+
+  .hidden-mobile {
+    display: none !important;
+  }
+}

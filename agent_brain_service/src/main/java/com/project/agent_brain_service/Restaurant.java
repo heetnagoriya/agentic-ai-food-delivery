@@ -8,8 +8,9 @@ public class Restaurant {
     public String name;
     public boolean isOpen;
     public double rating;
-    public String location; // 🆕 For future logistics
+    public String location;
     public List<MenuItem> menu = new ArrayList<>();
+    public List<Coupon> coupons = new ArrayList<>();  // Each restaurant has its own coupons
 
     public Restaurant(String id, String name, boolean isOpen, double rating, String location) {
         this.id = id;
@@ -21,5 +22,9 @@ public class Restaurant {
 
     public void addItem(String name, double price, String cuisine, List<String> tags, int stock) {
         menu.add(new MenuItem(name, price, cuisine, tags, stock));
+    }
+
+    public void addCoupon(String code, double percentOff, double flatOff, double maxDiscount, double minOrder, String description) {
+        coupons.add(new Coupon(code, percentOff, flatOff, maxDiscount, minOrder, description));
     }
 }
