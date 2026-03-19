@@ -44,6 +44,13 @@ public class AgentTool {
                 case "track_order" -> toolTrackOrder(args);
                 case "cancel_order" -> toolCancelOrder(args);
                 case "report_issue" -> toolReportIssue(args);
+                case "add_to_cart" -> toolAddToCart(args);
+                case "view_cart" -> toolViewCart(args);
+                case "remove_from_cart" -> toolRemoveFromCart(args);
+                case "checkout_cart" -> toolCheckoutCart(args);
+                case "get_recommendations" -> toolGetRecommendations(args);
+                case "get_order_history" -> toolGetOrderHistory(args);
+                case "reorder" -> toolReorder(args);
                 default -> mapper.writeValueAsString(Map.of("error", "Unknown tool: " + name));
             };
         } catch (Exception e) {
@@ -177,6 +184,62 @@ public class AgentTool {
         return mapper.writeValueAsString(result);
     }
 
+    // ==================== 🆕 CART & RECOMMENDATION TOOLS ====================
+
+    private String toolAddToCart(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        String restaurantId = getStringArg(args, "restaurantId", "");
+        String item = getStringArg(args, "item", "");
+        int quantity = 1;
+        try { quantity = Integer.parseInt(getStringArg(args, "quantity", "1")); } catch(Exception e) {}
+        List<String> customizations = new ArrayList<>();
+        Object cust = args.get("customizations");
+        if (cust instanceof List) {
+            ((List<?>) cust).forEach(c -> customizations.add(c.toString()));
+        }
+        String result = swiggy.addToCart(userId, restaurantId, item, quantity, customizations);
+        return mapper.writeValueAsString(Map.of("result", result));
+    }
+
+    private String toolViewCart(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        return mapper.writeValueAsString(swiggy.viewCart(userId));
+    }
+
+    private String toolRemoveFromCart(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        String itemName = getStringArg(args, "itemName", "");
+        String restaurantId = getStringArg(args, "restaurantId", "");
+        String result = swiggy.removeFromCart(userId, itemName, restaurantId);
+        return mapper.writeValueAsString(Map.of("result", result));
+    }
+
+    private String toolCheckoutCart(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        String couponCode = getStringArg(args, "couponCode", "");
+        String result = swiggy.checkoutCart(userId, couponCode);
+        return mapper.writeValueAsString(Map.of("result", result));
+    }
+
+    private String toolGetRecommendations(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        var recoms = swiggy.getRecommendations(userId);
+        return mapper.writeValueAsString(Map.of("recommendations", recoms));
+    }
+
+    private String toolGetOrderHistory(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        var history = swiggy.getOrderHistory(userId);
+        return mapper.writeValueAsString(Map.of("history", history));
+    }
+
+    private String toolReorder(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        String orderId = getStringArg(args, "orderId", "");
+        String result = swiggy.reorder(userId, orderId);
+        return mapper.writeValueAsString(Map.of("result", result));
+    }
+
     // ==================== FUNCTION DECLARATIONS (for Gemini API) ====================
 
     public List<Map<String, Object>> getFunctionDeclarations() {
@@ -283,6 +346,57 @@ public class AgentTool {
                 List.of("orderId", "userId", "issueType")
         ));
 
+        // 🆕 CART TOOLS
+        declarations.add(makeDeclaration(
+                "add_to_cart",
+                "Add an item to the shopping cart. Supports quantity and optional customizations.",
+                orderedMap(
+                        "userId", propString("User ID"),
+                        "restaurantId", propString("Restaurant ID"),
+                        "item", propString("Exact menu item name"),
+                        "quantity", propString("Quantity (e.g., '1')"),
+                        "customizations", propArrayString("List of customization names (e.g., ['Extra Cheese'])")
+                ),
+                List.of("userId", "restaurantId", "item")
+        ));
+        
+        declarations.add(makeDeclaration(
+                "view_cart", "View the user's cart and total price.",
+                orderedMap("userId", propString("User ID")),
+                List.of("userId")
+        ));
+        
+        declarations.add(makeDeclaration(
+                "remove_from_cart", "Remove an item from the cart.",
+                orderedMap("userId", propString("User ID"), "itemName", propString("Item to remove"), "restaurantId", propString("Optional restaurant ID")),
+                List.of("userId", "itemName")
+        ));
+        
+        declarations.add(makeDeclaration(
+                "checkout_cart", "Checkout and place orders for all cart items. Deducts money.",
+                orderedMap("userId", propString("User ID"), "couponCode", propString("Optional coupon code")),
+                List.of("userId")
+        ));
+
+        // 🆕 RECOMMENDATIONS & HISTORY
+        declarations.add(makeDeclaration(
+                "get_recommendations", "Get personalized food recommendations based on history, preferences, and time.",
+                orderedMap("userId", propString("User ID")),
+                List.of("userId")
+        ));
+        
+        declarations.add(makeDeclaration(
+                "get_order_history", "Get user's past order history.",
+                orderedMap("userId", propString("User ID")),
+                List.of("userId")
+        ));
+        
+        declarations.add(makeDeclaration(
+                "reorder", "Reorder a past order using its order ID.",
+                orderedMap("userId", propString("User ID"), "orderId", propString("Order ID from history")),
+                List.of("userId", "orderId")
+        ));
+
         return declarations;
     }
 
@@ -306,6 +420,14 @@ public class AgentTool {
         Map<String, Object> prop = new LinkedHashMap<>();
         prop.put("type", "STRING");
         prop.put("description", description);
+        return prop;
+    }
+
+    private Map<String, Object> propArrayString(String description) {
+        Map<String, Object> prop = new LinkedHashMap<>();
+        prop.put("type", "ARRAY");
+        prop.put("description", description);
+        prop.put("items", Map.of("type", "STRING"));
         return prop;
     }
 

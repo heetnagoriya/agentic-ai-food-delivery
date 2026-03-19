@@ -14,6 +14,24 @@ function getTimeNow() {
   return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
+function playNotificationSound() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  } catch(e) {}
+}
+
 function loadMessages(userId) {
   try {
     const data = sessionStorage.getItem(`cafe_messages_${userId}`);
@@ -35,6 +53,7 @@ function getSavedUser() {
 
 export default function App() {
   const [user, setUser] = useState(() => getSavedUser());
+  const [theme, setTheme] = useState(() => localStorage.getItem('cafe_theme') || 'dark');
   const [messages, setMessages] = useState([]);
   const [worldState, setWorldState] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -64,27 +83,33 @@ export default function App() {
   const fetchWorldState = useCallback(async () => {
     try {
       const data = await getWorldState();
-      setWorldState((prev) => {
-        // Detect order status changes
-        if (prev?.active_orders && data.active_orders) {
-          const prevOrders = prev.active_orders;
-          const newOrders = data.active_orders;
-          Object.entries(newOrders).forEach(([id, order]) => {
-            const prevOrder = prevOrders[id];
-            if (prevOrder && prevOrder.status !== order.status) {
-              addToast(
-                `Order ${id}: ${prevOrder.status.replace(/_/g, ' ')} → ${order.status.replace(/_/g, ' ')}`,
-                'info'
-              );
-            }
-          });
-        }
-        return data;
-      });
+      setWorldState(data);
     } catch (err) {
       console.error('World state fetch failed:', err);
     }
-  }, [addToast]);
+  }, []);
+
+  const prevWorldStateRef = useRef(null);
+
+  // Detect order status changes
+  useEffect(() => {
+    if (prevWorldStateRef.current?.active_orders && worldState?.active_orders) {
+      const prevOrders = prevWorldStateRef.current.active_orders;
+      const newOrders = worldState.active_orders;
+      
+      Object.entries(newOrders).forEach(([id, order]) => {
+        const prevOrder = prevOrders[id];
+        if (prevOrder && prevOrder.status !== order.status) {
+          playNotificationSound();
+          addToast(
+            `Order ${id}: ${prevOrder.status.replace(/_/g, ' ')} → ${order.status.replace(/_/g, ' ')}`,
+            'info'
+          );
+        }
+      });
+    }
+    prevWorldStateRef.current = worldState;
+  }, [worldState, addToast]);
 
   // Auto-refresh world state every 10s
   useEffect(() => {
@@ -102,6 +127,16 @@ export default function App() {
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Theme effect
+  useEffect(() => {
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('cafe_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(t => t === 'dark' ? 'light' : 'dark');
   }, []);
 
   // Login
@@ -254,6 +289,9 @@ export default function App() {
         orders={activeOrders}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onSend={handleSend}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       <main className="main-content" id="main-content">

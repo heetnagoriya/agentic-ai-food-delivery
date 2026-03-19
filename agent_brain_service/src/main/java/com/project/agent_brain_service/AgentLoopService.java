@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,15 +28,22 @@ public class AgentLoopService {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private static final int MAX_ITERATIONS = 10;
+    private static final int MAX_RETRIES = 10;
 
     // Current free-tier model (Feb 2026)
     private static final String MODEL_NAME = "gemini-2.5-flash";
 
     // ── Multi-API-Key Rotation ──
     // Set GEMINI_API_KEY="key1,key2,key3" in env for round-robin rotation.
-    // With N keys, cooldown drops from 14s to 14/N seconds per call.
+    // With N keys, cooldown drops proportionally.
     private String[] apiKeys;
     private final AtomicInteger keyIndex = new AtomicInteger(0);
+
+    // ── Per-Key Rate Tracking ──
+    // Tracks the last API call timestamp per key to enforce minimum gaps.
+    // Free tier: 15 RPM = 1 call per 4 seconds per key.
+    private static final long MIN_GAP_PER_KEY_MS = 4500L; // 4.5s per key (safe margin over 4s)
+    private final ConcurrentHashMap<String, Long> lastCallTimePerKey = new ConcurrentHashMap<>();
 
     private String getNextApiKey() {
         if (apiKeys == null || apiKeys.length == 0) {
@@ -53,11 +61,44 @@ public class AgentLoopService {
         return apiKeys[idx];
     }
 
+    /**
+     * Enforces a minimum time gap between calls to the same API key.
+     * If the last call with this key was too recent, sleeps until it's safe.
+     */
+    private void waitForRateLimit(String apiKey) throws InterruptedException {
+        Long lastCall = lastCallTimePerKey.get(apiKey);
+        if (lastCall != null) {
+            long elapsed = System.currentTimeMillis() - lastCall;
+            long waitNeeded = MIN_GAP_PER_KEY_MS - elapsed;
+            if (waitNeeded > 0) {
+                System.out.println("⏱️ Rate limiter: waiting " + (waitNeeded / 1000.0) + "s before next call (key ..." + apiKey.substring(Math.max(0, apiKey.length() - 4)) + ")");
+                Thread.sleep(waitNeeded);
+            }
+        }
+    }
+
+    /**
+     * Records that an API call was just made with this key.
+     */
+    private void recordApiCall(String apiKey) {
+        lastCallTimePerKey.put(apiKey, System.currentTimeMillis());
+    }
+
     private long getCooldownMs() {
         int numKeys = (apiKeys != null) ? apiKeys.length : 1;
         // Free tier: 15 RPM per key = 4s/req. With N keys: 4s/N.
-        // Minimum 1s to avoid hammering.
-        return Math.max(1000, 4000L / numKeys);
+        // Minimum 2s to avoid hammering.
+        return Math.max(2000, MIN_GAP_PER_KEY_MS / numKeys);
+    }
+
+    /**
+     * Exponential backoff for retry waits.
+     * Starts at 10s, doubles each retry, capped at 60s.
+     */
+    private long getExponentialBackoff(int retryCount) {
+        long baseMs = 10_000L; // 10 seconds
+        long backoff = baseMs * (1L << (retryCount - 1)); // 10s, 20s, 40s, ...
+        return Math.min(backoff, 60_000L); // cap at 60s
     }
 
     // v1beta required for system_instruction and tools (function calling)
@@ -91,8 +132,10 @@ public class AgentLoopService {
                 int retries = 0;
                 long startTime = System.currentTimeMillis();
 
-                while (retries < 5) {
+                while (retries < MAX_RETRIES) {
                     String currentKey = getNextApiKey();
+                    // Enforce per-key rate limit BEFORE making the call
+                    waitForRateLimit(currentKey);
                     String url = API_BASE + MODEL_NAME + ":generateContent?key=" + currentKey;
 
                     // Use atomic references to capture error info from status handlers
@@ -120,6 +163,8 @@ public class AgentLoopService {
                             throw new GeminiApiException(httpStatus.get(), errorBody.get());
                         }
 
+                        // Record successful call time for rate tracking
+                        recordApiCall(currentKey);
                         break; // Success
 
                     } catch (GeminiApiException apiEx) {
@@ -130,8 +175,8 @@ public class AgentLoopService {
                             retries++;
                             // Rotate to next key on rate limit
                             System.out.println("🔄 Rotating to next API key after HTTP " + status);
-                            // Parse retryDelay from API response if available
-                            long waitTime = 8000L; // Default 8 seconds (reduced from 20s)
+                            // Use exponential backoff, but also respect API's retryDelay if provided
+                            long waitTime = getExponentialBackoff(retries);
                             try {
                                 if (body.contains("retryDelay")) {
                                     // Extract seconds from "retryDelay": "13s" or "57s"
@@ -141,17 +186,18 @@ public class AgentLoopService {
                                     if (parts.length > 1) {
                                         String delayStr = parts[1].replaceAll("[^0-9.]", "");
                                         double delaySec = Double.parseDouble(delayStr);
-                                        waitTime = (long) (delaySec * 1000) + 3000; // Add 3s buffer
+                                        // Use the LARGER of API's retryDelay+buffer and our exponential backoff
+                                        waitTime = Math.max(waitTime, (long) (delaySec * 1000) + 3000);
                                     }
                                 }
                             } catch (Exception parseEx) {
-                                waitTime = 5000L * retries; // Fallback: exponential backoff
+                                // Stick with exponential backoff
                             }
-                            // Trust the API's retryDelay; just add a small safety buffer
-                            waitTime = Math.max(waitTime, 3000L);
-                            System.out.println("⏳ Rate limited (HTTP " + status + "). Waiting " + (waitTime / 1000) + "s... [Retry " + retries + "/5]");
-                            trace.add(new AgentResponse.TraceStep("⏳ Rate Limited (HTTP " + status + ")", "", "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/5", 0));
+                            System.out.println("⏳ Rate limited (HTTP " + status + "). Waiting " + (waitTime / 1000) + "s... [Retry " + retries + "/" + MAX_RETRIES + "]");
+                            trace.add(new AgentResponse.TraceStep("⏳ Rate Limited (HTTP " + status + ")", "", "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0));
                             Thread.sleep(waitTime);
+                            // Record the wait so rate tracker knows this key was recently attempted
+                            recordApiCall(currentKey);
                         } else if (status == 404) {
                             String msg = "Model '" + MODEL_NAME + "' not found. Check https://ai.google.dev/gemini-api/docs/models for current models.";
                             System.out.println("🔴 " + msg);
@@ -173,14 +219,14 @@ public class AgentLoopService {
                         System.out.println("⚠️ Unexpected error calling Gemini: " + err);
                         e.printStackTrace();
                         retries++;
-                        if (retries >= 5) {
-                            throw new RuntimeException("Network error after 5 retries: " + err);
+                        if (retries >= MAX_RETRIES) {
+                            throw new RuntimeException("Network error after " + MAX_RETRIES + " retries: " + err);
                         }
-                        Thread.sleep(5000L * retries);
+                        Thread.sleep(getExponentialBackoff(retries));
                     }
                 }
 
-                if (rawResponse == null) throw new RuntimeException("Google API failed after 5 retries. Check server console for details.");
+                if (rawResponse == null) throw new RuntimeException("Google API failed after " + MAX_RETRIES + " retries. Check server console for details.");
                 long duration = System.currentTimeMillis() - startTime;
 
                 JsonNode root = mapper.readTree(rawResponse);
@@ -297,8 +343,10 @@ public class AgentLoopService {
                 int retries = 0;
                 long startTime = System.currentTimeMillis();
 
-                while (retries < 5) {
+                while (retries < MAX_RETRIES) {
                     String currentKey = getNextApiKey();
+                    // Enforce per-key rate limit BEFORE making the call
+                    waitForRateLimit(currentKey);
                     String url = API_BASE + MODEL_NAME + ":generateContent?key=" + currentKey;
 
                     AtomicInteger httpStatus = new AtomicInteger(0);
@@ -321,6 +369,8 @@ public class AgentLoopService {
                             rawResponse = null;
                             throw new GeminiApiException(httpStatus.get(), errorBody.get());
                         }
+                        // Record successful call time for rate tracking
+                        recordApiCall(currentKey);
                         break;
 
                     } catch (GeminiApiException apiEx) {
@@ -329,7 +379,8 @@ public class AgentLoopService {
 
                         if (status == 429 || status == 503) {
                             retries++;
-                            long waitTime = 8000L;
+                            // Use exponential backoff, but also respect API's retryDelay if provided
+                            long waitTime = getExponentialBackoff(retries);
                             try {
                                 if (body.contains("retryDelay")) {
                                     int idx = body.indexOf("retryDelay");
@@ -338,19 +389,19 @@ public class AgentLoopService {
                                     if (parts.length > 1) {
                                         String delayStr = parts[1].replaceAll("[^0-9.]", "");
                                         double delaySec = Double.parseDouble(delayStr);
-                                        waitTime = (long) (delaySec * 1000) + 3000;
+                                        waitTime = Math.max(waitTime, (long) (delaySec * 1000) + 3000);
                                     }
                                 }
                             } catch (Exception parseEx) {
-                                waitTime = 5000L * retries;
+                                // Stick with exponential backoff
                             }
-                            waitTime = Math.max(waitTime, 3000L);
                             AgentResponse.TraceStep retryStep = new AgentResponse.TraceStep(
                                     "⏳ Rate Limited (HTTP " + status + ")", "",
-                                    "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/5", 0);
+                                    "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0);
                             trace.add(retryStep);
                             emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(retryStep)));
                             Thread.sleep(waitTime);
+                            recordApiCall(currentKey);
                         } else {
                             throw new RuntimeException("Gemini API error (HTTP " + status + "): " + truncate(body, 300));
                         }
@@ -358,12 +409,12 @@ public class AgentLoopService {
                         throw ex;
                     } catch (Exception e) {
                         retries++;
-                        if (retries >= 5) throw new RuntimeException("Network error after 5 retries: " + e.getMessage());
-                        Thread.sleep(5000L * retries);
+                        if (retries >= MAX_RETRIES) throw new RuntimeException("Network error after " + MAX_RETRIES + " retries: " + e.getMessage());
+                        Thread.sleep(getExponentialBackoff(retries));
                     }
                 }
 
-                if (rawResponse == null) throw new RuntimeException("Google API failed after 5 retries.");
+                if (rawResponse == null) throw new RuntimeException("Google API failed after " + MAX_RETRIES + " retries.");
                 long duration = System.currentTimeMillis() - startTime;
 
                 JsonNode root = mapper.readTree(rawResponse);
@@ -453,15 +504,61 @@ public class AgentLoopService {
     // ==================== HELPERS ====================
     private static final int MAX_HISTORY_MESSAGES = 20;
 
+    /**
+     * Safely trims conversation history to ensure it doesn't violate Gemini API constraints:
+     * 1. The first message must have role="user"
+     * 2. functionCall and functionResponse pairs must not be split
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> trimHistorySafely(List<Map<String, Object>> fullHistory, int maxMessages) {
+        if (fullHistory.size() <= maxMessages) {
+            return fullHistory;
+        }
+
+        int startIndex = fullHistory.size() - maxMessages;
+
+        // Walk forward to find a safe start index.
+        // A safe start is a "user" role message that is NOT a "functionResponse".
+        while (startIndex < fullHistory.size()) {
+            Map<String, Object> msg = fullHistory.get(startIndex);
+            String role = (String) msg.get("role");
+
+            if ("user".equals(role)) {
+                List<Map<String, Object>> parts = (List<Map<String, Object>>) msg.get("parts");
+                boolean isFunctionResponse = false;
+                
+                if (parts != null && !parts.isEmpty()) {
+                    for (Map<String, Object> part : parts) {
+                        if (part.containsKey("functionResponse")) {
+                            isFunctionResponse = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!isFunctionResponse) {
+                    break; // Found a pure user text message to safely begin the trimmed context
+                }
+            }
+            startIndex++;
+        }
+
+        // Fallback: if we couldn't find a safe start, just return the full history
+        // to avoid API errors (though it uses more tokens).
+        if (startIndex >= fullHistory.size()) {
+            return fullHistory;
+        }
+
+        return new ArrayList<>(fullHistory.subList(startIndex, fullHistory.size()));
+    }
+
     private Map<String, Object> buildGeminiRequest(String userId, String systemPrompt) {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("system_instruction", Map.of("parts", List.of(Map.of("text", systemPrompt))));
 
         // Trim conversation history to last N messages to reduce token count and speed up inference
         List<Map<String, Object>> fullHistory = historyService.getHistory(userId);
-        List<Map<String, Object>> trimmed = fullHistory.size() > MAX_HISTORY_MESSAGES
-                ? new ArrayList<>(fullHistory.subList(fullHistory.size() - MAX_HISTORY_MESSAGES, fullHistory.size()))
-                : fullHistory;
+        List<Map<String, Object>> trimmed = trimHistorySafely(fullHistory, MAX_HISTORY_MESSAGES);
         request.put("contents", trimmed);
 
         request.put("tools", List.of(Map.of("functionDeclarations", agentTool.getFunctionDeclarations())));
@@ -504,23 +601,30 @@ public class AgentLoopService {
                 - DISLIKES: [%s]. Avoid unless no alternative.
                 - BLACKLISTED RESTAURANTS: [%s]. NEVER order from these.
 
-                AUTONOMY: Level=%s | Cuisine Confidence: {%s} | Restaurant Prefs: {%s}
+                AUTONOMY: Level=%s | Cuisine Confidence: {%s} | Restaurant Prefs: {%s} | Language: %s
                 • FULL_AUTO: Act immediately, no confirmation needed.
                 • BALANCED: confidence>=0.6 → proceed; <0.6 or unknown → ask first.
                 • CONSERVATIVE: Always ask before ordering.
 
-                CRITICAL: On user confirmation ("yes"/"sure"/"go ahead"), complete the ENTIRE remaining workflow in ONE turn. Never pause mid-flow.
+                CRITICAL RULES:
+                - ALWAYS respond to the user strictly in their preferred language: %s (Translate your final natural language response).
+                - On user confirmation ("yes"/"sure"/"go ahead"), complete the ENTIRE remaining workflow in ONE turn. Never pause mid-flow.
+                - Once a restaurant is selected/named by the user, IMMEDIATELY complete the FULL order. NEVER say "shall I order?".
 
-                WORKFLOW:
+                CART WORKFLOW:
                 1. search_menu (always pass userId)
-                2. rank_restaurants if multiple results → present top 2-3, recommend #1
-                3. Confirm if needed per autonomy rules
-                4. evaluate_coupons → check_wallet → place_order → report ALL AT ONCE
+                2. If multiple restaurants found → rank_restaurants, present top options
+                3. Once items/restaurant selected:
+                   a. evaluate_coupons → pick best
+                   b. check_wallet → verify funds
+                   c. add_to_cart for EACH item requested, including any requested customizations
+                   d. checkout_cart with best coupon
+                   e. Report order confirmation
+                   Do NOT pause between these steps.
 
-                MULTI-RESTAURANT: Same item at multiple places → rank_restaurants, present top options with price/rating/preference/coupons. Honor specific restaurant requests directly.
-
-                ORDER STATUS: track_order with order ID.
-                COUPONS: Pick max rupee discount. Explain briefly.
+                SMART FEATURES:
+                - "I don't know what to eat" / "Recommend": Call get_recommendations.
+                - "Order what I had last time" / "Reorder": Call get_order_history, then reorder.
 
                 CANCELLATION (cancel_order): PLACED=full refund, PREPARING=50%% refund, OUT_FOR_DELIVERY/DELIVERED=cannot cancel.
                 ISSUES (report_issue on delivered orders): WRONG_ITEM/MISSING_ITEM/NEVER_DELIVERED=full refund, COLD_FOOD/BAD_QUALITY=50%% refund.
@@ -530,14 +634,17 @@ public class AgentLoopService {
                     userId, profile.budget.rangeMin, profile.budget.rangeMax, profile.autonomyLevel,
                     allergies, dislikes, blacklistedRestaurants,
                     profile.autonomyLevel,
-                    confidenceStr.toString(), restPrefStr.toString()
+                    confidenceStr.toString(), restPrefStr.toString(), profile.languagePreference, profile.languagePreference
                 );
     }
 
     private String getToolEmoji(String name) {
         if (name.contains("search")) return "🔍";
         if (name.contains("wallet")) return "💰";
+        if (name.contains("cart")) return "🛒";
         if (name.contains("order") && !name.contains("cancel")) return "🛒";
+        if (name.contains("reorder") || name.contains("history")) return "🔁";
+        if (name.contains("recommendation")) return "💡";
         if (name.contains("coupon")) return "🎟️";
         if (name.contains("rank")) return "📊";
         if (name.contains("track")) return "🛵";

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { loginWithApi, registerWithApi } from '../../utils/api';
 import './Auth.css';
 
 export default function AuthPage({ onLogin }) {
@@ -7,7 +8,7 @@ export default function AuthPage({ onLogin }) {
     const [name, setName] = useState('');
     const [error, setError] = useState('');
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
 
@@ -18,15 +19,28 @@ export default function AuthPage({ onLogin }) {
             setError('Please enter a User ID');
             return;
         }
-        if (!trimmedName) {
+        if (mode === 'signup' && !trimmedName) {
             setError('Please enter your name');
             return;
         }
 
-        // Store in localStorage
-        const userData = { userId: trimmedId, name: trimmedName };
-        localStorage.setItem('cafe_user', JSON.stringify(userData));
-        onLogin(userData);
+        try {
+            let data;
+            // Since our backend login only takes username, pass trimmedId for both
+            if (mode === 'signin') {
+                data = await loginWithApi(trimmedId, 'dummyPass');
+            } else {
+                data = await registerWithApi(trimmedId, 'dummyPass');
+            }
+
+            // We use the ID as name if name is empty (signin mode)
+            const resolvedName = trimmedName || trimmedId;
+            const userData = { userId: data.userId, name: resolvedName };
+            localStorage.setItem('cafe_user', JSON.stringify(userData));
+            onLogin(userData);
+        } catch (err) {
+            setError(err.message || 'Authentication failed');
+        }
     };
 
     return (

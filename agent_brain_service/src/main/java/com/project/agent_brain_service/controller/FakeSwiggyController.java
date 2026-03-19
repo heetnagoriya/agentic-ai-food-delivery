@@ -15,13 +15,28 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/fake-swiggy")
 public class FakeSwiggyController {
+    @jakarta.annotation.PostConstruct
+    public void seedDb() {
+        if (dbService.getAllRestaurants().isEmpty()) {
+            System.out.println("Seeding DynamoDB with mock data...");
+            RESTAURANTS.forEach(r -> dbService.saveRestaurant(r));
+            WALLETS.values().forEach(w -> dbService.saveWallet(w));
+        }
+    }
+
 
     private static final List<Restaurant> RESTAURANTS = new ArrayList<>();
     private static final Map<String, Order> ACTIVE_ORDERS = new HashMap<>();
     private static final Map<String, UserWallet> WALLETS = new HashMap<>();
+    private static final Map<String, Cart> CARTS = new HashMap<>();
+    private static final Map<String, List<OrderHistoryEntry>> ORDER_HISTORY = new HashMap<>();
 
     @Autowired
     private UserProfileService userProfileService;
+
+    @Autowired
+    private com.project.agent_brain_service.service.DynamoDbService dbService;
+
 
     // Surge Pricing State
     private static boolean SURGE_ACTIVE = false;
@@ -32,108 +47,129 @@ public class FakeSwiggyController {
     private static final double[] USER_DEFAULT_COORDS = {22.5645, 72.9280}; // Default user location (Anand)
 
     static {
-        // --- 💰 WALLETS ---
+        // --- 💰 WALLETS & CARTS ---
         WALLETS.put("user_123", new UserWallet("user_123", 2500.0));  // Rich user
         WALLETS.put("user_456", new UserWallet("user_456", 100.0));   // Budget user
+        CARTS.put("user_123", new Cart("user_123"));
+        CARTS.put("user_456", new Cart("user_456"));
+        ORDER_HISTORY.put("user_123", new ArrayList<>());
+        ORDER_HISTORY.put("user_456", new ArrayList<>());
 
         // ══════════════════════════════════════════════════════════
-        //   🍕 PIZZA RESTAURANTS (Luigi's vs Pizza Hut)
+        //   🍕 PIZZA/ITALIAN RESTAURANTS
         // ══════════════════════════════════════════════════════════
 
-        // --- 🏪 RESTAURANT 1: Luigi's Italian (Premium, high-rated) ---
-        Restaurant r1 = new Restaurant("res_1", "Luigi's Italian", true, 4.8, "Downtown");
-        r1.addItem("Pizza", 600.0, "Italian", List.of("Cheesy", "Heavy", "Premium"), 50);
+        // --- 🏪 RESTAURANT 1: Sharma's Kitchen (Premium, high-rated) ---
+        Restaurant r1 = new Restaurant("res_1", "Sharma's Kitchen", true, 4.8, "Downtown");
+        r1.addItem("Pizza", 600.0, "Italian", List.of("Cheesy", "Heavy", "Premium", "Gluten", "Dairy"));
+        r1.menu.get(0).addCustomization("Extra Cheese", 50.0, "ADD");
+        r1.menu.get(0).addCustomization("Mushroom Topping", 40.0, "ADD");
+        r1.menu.get(0).addCustomization("No Onions", 0.0, "REMOVE");
         r1.menu.get(0).addReview("Alice", 5.0, "Best pizza in town! The cheese pull is real.", "Positive");
         r1.menu.get(0).addReview("Bob", 3.0, "Good but way too oily. Felt heavy afterwards.", "Neutral");
         r1.menu.get(0).addReview("Charlie", 2.0, "Arrived cold and the crust was soggy.", "Negative");
 
-        r1.addItem("Pasta", 450.0, "Italian", List.of("Light", "Veg"), 5);
+        r1.addItem("Pasta", 450.0, "Italian", List.of("Light", "Veg"));
+        r1.menu.get(1).addCustomization("Extra Garlic Bread", 80.0, "ADD");
         r1.menu.get(1).addReview("Dave", 5.0, "Perfectly al dente. The white sauce is amazing.", "Positive");
 
-        r1.addCoupon("LUIGI60", 60.0, 0, 120.0, 199.0, "60% off up to ₹120 on orders above ₹199");
-        r1.addCoupon("LUIGI30", 30.0, 0, 200.0, 399.0, "30% off up to ₹200 on orders above ₹399");
+        r1.addCoupon("SHARMA60", 60.0, 0, 120.0, 199.0, "60% off up to ₹120 on orders above ₹199");
+        r1.addCoupon("SHARMA30", 30.0, 0, 200.0, 399.0, "30% off up to ₹200 on orders above ₹399");
 
-        // --- 🏪 RESTAURANT 4: Pizza Hut (Budget-friendly, decent quality) ---
-        Restaurant r4 = new Restaurant("res_4", "Pizza Hut", true, 4.1, "Sector 7");
-        r4.addItem("Pizza", 350.0, "Italian", List.of("Cheesy", "Veg"), 80);
+        // --- 🏪 RESTAURANT 4: Oven Story Pizza (Budget-friendly, decent quality) ---
+        Restaurant r4 = new Restaurant("res_4", "Oven Story Pizza", true, 4.1, "Sector 7");
+        r4.addItem("Pizza", 350.0, "Italian", List.of("Cheesy", "Veg"));
+        r4.menu.get(0).addCustomization("Extra Cheese", 40.0, "ADD");
+        r4.menu.get(0).addCustomization("Jalapenos", 20.0, "ADD");
         r4.menu.get(0).addReview("Nisha", 4.0, "Good value for money. Not gourmet but hits the spot.", "Positive");
         r4.menu.get(0).addReview("Raj", 3.5, "Decent pizza. Cheese could be better quality.", "Neutral");
         r4.menu.get(0).addReview("Sita", 4.5, "Fast delivery and hot pizza. My go-to for budget meals!", "Positive");
 
-        r4.addItem("Pasta", 250.0, "Italian", List.of("Light", "Veg", "Budget"), 40);
+        r4.addItem("Pasta", 250.0, "Italian", List.of("Light", "Veg", "Budget"));
         r4.menu.get(1).addReview("Vikram", 3.0, "Average pasta. Nothing special but affordable.", "Neutral");
 
-        r4.addItem("Garlic Bread", 150.0, "Italian", List.of("Veg", "Snack", "Light"), 60);
+        r4.addItem("Garlic Bread", 150.0, "Italian", List.of("Veg", "Snack", "Light"));
+        r4.menu.get(2).addCustomization("Cheese Dip", 25.0, "ADD");
         r4.menu.get(2).addReview("Anita", 4.0, "Crispy and buttery. Great as a side!", "Positive");
 
-        r4.addCoupon("PHut40", 40.0, 0, 80.0, 199.0, "40% off up to ₹80 on orders above ₹199");
-        r4.addCoupon("PHutFLAT", 0, 50.0, 0, 299.0, "Flat ₹50 off on orders above ₹299");
+        r4.addCoupon("OVEN40", 40.0, 0, 80.0, 199.0, "40% off up to ₹80 on orders above ₹199");
+        r4.addCoupon("OVENFLAT", 0, 50.0, 0, 299.0, "Flat ₹50 off on orders above ₹299");
 
         // ══════════════════════════════════════════════════════════
-        //   🍔 BURGER RESTAURANTS (Burger King vs McDonald's)
+        //   🍔 BURGER RESTAURANTS
         // ══════════════════════════════════════════════════════════
 
-        // --- 🏪 RESTAURANT 2: Burger King (Spicy, bold flavors) ---
-        Restaurant r2 = new Restaurant("res_2", "Burger King", true, 4.2, "Uptown");
-        r2.addItem("Burger", 350.0, "Fast Food", List.of("Spicy", "Non-Veg"), 100);
+        // --- 🏪 RESTAURANT 2: Bombay Burger Co. (Spicy, bold flavors) ---
+        Restaurant r2 = new Restaurant("res_2", "Bombay Burger Co.", true, 4.2, "Uptown");
+        r2.addItem("Burger", 350.0, "Fast Food", List.of("Spicy", "Non-Veg", "Gluten", "Dairy"));
+        r2.menu.get(0).addCustomization("Extra Patty", 80.0, "ADD");
+        r2.menu.get(0).addCustomization("Egg", 20.0, "ADD");
+        r2.menu.get(0).addCustomization("No Mayo", 0.0, "REMOVE");
         r2.menu.get(0).addReview("Eve", 4.0, "Spicy means SPICY! Watch out if you can't handle heat.", "Positive");
         r2.menu.get(0).addReview("Frank", 1.0, "Stale bun. Not worth it.", "Negative");
 
-        r2.addItem("Fries", 80.0, "Fast Food", List.of("Light", "Veg"), 200);
+        r2.addItem("Fries", 80.0, "Fast Food", List.of("Light", "Veg"));
+        r2.menu.get(1).addCustomization("Peri Peri Masala", 15.0, "ADD");
         r2.menu.get(1).addReview("Grace", 4.5, "Crispy and perfectly salted.", "Positive");
 
-        r2.addItem("Chicken Wrap", 220.0, "Fast Food", List.of("Non-Veg", "Light"), 80);
+        r2.addItem("Chicken Wrap", 220.0, "Fast Food", List.of("Non-Veg", "Light"));
         r2.menu.get(2).addReview("Henry", 4.0, "Good value for money, filling enough.", "Positive");
 
-        r2.addCoupon("BK175", 0, 175.0, 0, 350.0, "Flat ₹175 off on orders above ₹350");
-        r2.addCoupon("BK50", 50.0, 0, 100.0, 149.0, "50% off up to ₹100 on orders above ₹149");
+        r2.addCoupon("BOMBAY175", 0, 175.0, 0, 350.0, "Flat ₹175 off on orders above ₹350");
+        r2.addCoupon("BOMBAY50", 50.0, 0, 100.0, 149.0, "50% off up to ₹100 on orders above ₹149");
 
-        // --- 🏪 RESTAURANT 5: McDonald's (Consistent, family-friendly) ---
-        Restaurant r5 = new Restaurant("res_5", "McDonald's", true, 4.4, "Mall Road");
-        r5.addItem("Burger", 180.0, "Fast Food", List.of("Mild", "Non-Veg", "Budget"), 150);
-        r5.menu.get(0).addReview("Priya", 4.0, "Classic McBurger taste. Consistent as always.", "Positive");
+        // --- 🏪 RESTAURANT 5: Desi Bites (Consistent, family-friendly) ---
+        Restaurant r5 = new Restaurant("res_5", "Desi Bites", true, 4.4, "Mall Road");
+        r5.addItem("Burger", 180.0, "Fast Food", List.of("Mild", "Non-Veg", "Budget"));
+        r5.menu.get(0).addCustomization("Extra Cheese slice", 20.0, "ADD");
+        r5.menu.get(0).addReview("Priya", 4.0, "Classic taste. Consistent as always.", "Positive");
         r5.menu.get(0).addReview("Arjun", 4.5, "Best budget burger in town. Quick service too.", "Positive");
         r5.menu.get(0).addReview("Meera", 3.5, "Not as big as I'd like but tastes good.", "Neutral");
 
-        r5.addItem("Fries", 120.0, "Fast Food", List.of("Light", "Veg", "Crispy"), 200);
+        r5.addItem("Fries", 120.0, "Fast Food", List.of("Light", "Veg", "Crispy"));
         r5.menu.get(1).addReview("Karthik", 5.0, "Golden, crispy perfection. Best fries period.", "Positive");
         r5.menu.get(1).addReview("Divya", 4.0, "Consistent quality. Never disappointed.", "Positive");
 
-        r5.addItem("McFlurry", 150.0, "Dessert", List.of("Sweet", "Veg", "Cold"), 100);
+        r5.addItem("McFlurry", 150.0, "Dessert", List.of("Sweet", "Veg", "Cold", "Dairy", "Peanuts"));
         r5.menu.get(2).addReview("Sneha", 5.0, "Perfect on a hot day! Love the Oreo one.", "Positive");
 
-        r5.addCoupon("MC99", 0, 30.0, 0, 99.0, "Flat ₹30 off on orders above ₹99");
-        r5.addCoupon("MCMEAL", 25.0, 0, 75.0, 249.0, "25% off up to ₹75 on orders above ₹249");
+        r5.addCoupon("DESI99", 0, 30.0, 0, 99.0, "Flat ₹30 off on orders above ₹99");
+        r5.addCoupon("DESIMEAL", 25.0, 0, 75.0, 249.0, "25% off up to ₹75 on orders above ₹249");
 
         // ══════════════════════════════════════════════════════════
-        //   🥘 SOUTH INDIAN / INDIAN (Spice Garden vs Dosa Plaza)
+        //   🥘 SOUTH INDIAN / INDIAN
         // ══════════════════════════════════════════════════════════
 
         // --- 🏪 RESTAURANT 3: Spice Garden (Traditional, premium South Indian) ---
         Restaurant r3 = new Restaurant("res_3", "Spice Garden", true, 4.6, "Midtown");
-        r3.addItem("Masala Dosa", 120.0, "South Indian", List.of("Veg", "Crispy"), 30);
+        r3.addItem("Masala Dosa", 120.0, "South Indian", List.of("Veg", "Crispy"));
+        r3.menu.get(0).addCustomization("Extra Chutney", 10.0, "ADD");
+        r3.menu.get(0).addCustomization("Extra Sambar", 20.0, "ADD");
         r3.menu.get(0).addReview("Isha", 5.0, "Authentic taste. The chutney is surprisingly spicy.", "Positive");
         r3.menu.get(0).addReview("Jay", 4.0, "Crispy outside, soft inside. Classic.", "Positive");
 
-        r3.addItem("Biryani", 280.0, "Indian", List.of("Non-Veg", "Spicy", "Heavy"), 25);
+        r3.addItem("Biryani", 280.0, "Indian", List.of("Non-Veg", "Spicy", "Heavy"));
+        r3.menu.get(1).addCustomization("Extra Raita", 15.0, "ADD");
         r3.menu.get(1).addReview("Kumar", 5.0, "Restaurant-quality biryani delivered hot.", "Positive");
         r3.menu.get(1).addReview("Lakshmi", 4.5, "Fragrant rice with perfectly cooked meat.", "Positive");
 
-        r3.addItem("Idli Sambar", 90.0, "South Indian", List.of("Veg", "Light", "Healthy"), 60);
+        r3.addItem("Idli Sambar", 90.0, "South Indian", List.of("Veg", "Light", "Healthy"));
 
         r3.addCoupon("SPICE50", 50.0, 0, 80.0, 99.0, "50% off up to ₹80 on orders above ₹99");
         r3.addCoupon("NEWSPICE", 0, 30.0, 0, 99.0, "Flat ₹30 off on orders above ₹99");
 
         // --- 🏪 RESTAURANT 6: Dosa Plaza (Quick, budget South Indian) ---
         Restaurant r6 = new Restaurant("res_6", "Dosa Plaza", true, 4.3, "Station Road");
-        r6.addItem("Masala Dosa", 80.0, "South Indian", List.of("Veg", "Crispy", "Budget"), 50);
+        r6.addItem("Masala Dosa", 80.0, "South Indian", List.of("Veg", "Crispy", "Budget"));
+        r6.menu.get(0).addCustomization("Extra Sambar", 15.0, "ADD");
         r6.menu.get(0).addReview("Ramesh", 3.5, "Quick and cheap. Not the best dosa but fills you up.", "Neutral");
         r6.menu.get(0).addReview("Sunita", 4.0, "Surprisingly good for the price! Crispy and fresh.", "Positive");
 
-        r6.addItem("Idli Sambar", 60.0, "South Indian", List.of("Veg", "Light", "Budget", "Healthy"), 80);
+        r6.addItem("Idli Sambar", 60.0, "South Indian", List.of("Veg", "Light", "Budget", "Healthy"));
+        r6.menu.get(1).addCustomization("Extra Chutney", 10.0, "ADD");
         r6.menu.get(1).addReview("Gopal", 4.5, "Soft fluffy idlis. Sambar is phenomenal.", "Positive");
 
-        r6.addItem("Biryani", 180.0, "Indian", List.of("Non-Veg", "Spicy", "Budget"), 40);
+        r6.addItem("Biryani", 180.0, "Indian", List.of("Non-Veg", "Spicy", "Budget"));
         r6.menu.get(2).addReview("Fatima", 3.0, "Okay biryani. Rice was a bit undercooked.", "Neutral");
         r6.menu.get(2).addReview("Ravi", 4.0, "Great value for ₹180. Generous portions.", "Positive");
 
@@ -232,23 +268,23 @@ public class FakeSwiggyController {
                     .filter(s -> !s.isEmpty())
                     .toList();
 
-        for (Restaurant r : RESTAURANTS) {
+        for (Restaurant r : dbService.getAllRestaurants()) {
             // Skip blacklisted restaurants
             if (blacklist.contains(r.id)) continue;
 
             for (MenuItem item : r.menu) {
-                // Skip items matching allergies (check name, cuisine, tags)
+                // Determine if item contains user allergies
+                boolean hasAllergen = false;
+                List<String> matchedAllergens = new ArrayList<>();
                 if (!allergyList.isEmpty()) {
-                    boolean hasAllergen = false;
                     for (String allergy : allergyList) {
                         if (item.name.toLowerCase().contains(allergy)
                                 || item.cuisine.toLowerCase().contains(allergy)
                                 || item.tags.stream().anyMatch(t -> t.toLowerCase().contains(allergy))) {
                             hasAllergen = true;
-                            break;
+                            matchedAllergens.add(allergy);
                         }
                     }
-                    if (hasAllergen) continue;
                 }
 
                 boolean match = q.isEmpty()
@@ -269,7 +305,10 @@ public class FakeSwiggyController {
                     entry.put("original_price", item.price);
                     entry.put("surge_active", SURGE_ACTIVE);
 
-                    entry.put("stock", item.stockCount);
+                    if (hasAllergen) {
+                        entry.put("allergy_warning", "Contains: " + String.join(", ", matchedAllergens));
+                    }
+
                     entry.put("tags", item.tags);
                     entry.put("cuisine", item.cuisine);
 
@@ -455,7 +494,7 @@ public class FakeSwiggyController {
     public List<Map<String, Object>> evaluateCoupons(@RequestParam String restaurantId, @RequestParam String itemName) {
         List<Map<String, Object>> evaluations = new ArrayList<>();
 
-        Optional<Restaurant> resOpt = RESTAURANTS.stream().filter(r -> r.id.equals(restaurantId)).findFirst();
+        Optional<Restaurant> resOpt = dbService.getAllRestaurants().stream().filter(r -> r.id.equals(restaurantId)).findFirst();
         if (resOpt.isEmpty()) return evaluations;
 
         Restaurant restaurant = resOpt.get();
@@ -491,6 +530,203 @@ public class FakeSwiggyController {
         return evaluations;
     }
 
+    // ================== CARTS (B1) ==================
+
+    @PostMapping("/cart/add")
+    public String addToCart(@RequestParam String userId, @RequestParam String restaurantId,
+                            @RequestParam String item, @RequestParam(defaultValue = "1") int quantity,
+                            @RequestParam(required = false) List<String> customizations) {
+        Cart cart = dbService.getCart(userId);
+        if (cart == null) cart = new Cart(userId);
+        MenuItem food = getItemDetails(restaurantId, item);
+        if (food == null) return "❌ ERROR: Item '" + item + "' not found.";
+        Restaurant res = dbService.getAllRestaurants().stream().filter(r -> r.id.equals(restaurantId)).findFirst().orElse(null);
+
+        double custTotal = 0.0;
+        List<String> custs = new ArrayList<>();
+        if (customizations != null) {
+            for (String cName : customizations) {
+                for (Customization c : food.availableCustomizations) {
+                    if (c.name.equalsIgnoreCase(cName)) {
+                        custTotal += c.additionalPrice;
+                        custs.add(c.name);
+                        break;
+                    }
+                }
+            }
+        }
+
+        cart.addItem(new CartItem(restaurantId, res.name, food.name, food.price, quantity, custs, custTotal));
+        dbService.saveCart(cart);
+        dbService.saveCart(cart);
+        return "✅ Added " + quantity + "x " + food.name + " to cart.";
+    }
+
+    @GetMapping("/cart")
+    public Map<String, Object> viewCart(@RequestParam String userId) {
+        Cart cart = dbService.getCart(userId);
+        if (cart == null) cart = new Cart(userId);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("user_id", userId);
+        response.put("items", cart.items);
+        response.put("total_amount", cart.getTotal());
+        return response;
+    }
+
+    @PostMapping("/cart/remove")
+    public String removeFromCart(@RequestParam String userId, @RequestParam String itemName,
+                                 @RequestParam(required = false) String restaurantId) {
+        Cart cart = dbService.getCart(userId);
+        if (cart == null) cart = new Cart(userId);
+        if (cart.removeItem(itemName, restaurantId)) {
+            dbService.saveCart(cart);
+            return "✅ Removed " + itemName + " from cart.";
+        }
+        return "❌ Item " + itemName + " not found in cart.";
+    }
+
+    @PostMapping("/cart/checkout")
+    public String checkoutCart(@RequestParam String userId, @RequestParam(defaultValue = "") String couponCode) {
+        Cart cart = dbService.getCart(userId);
+        if (cart == null || cart.isEmpty()) return "❌ Cart is empty.";
+
+        UserWallet wallet = dbService.getWallet(userId);
+        if (wallet == null) return "❌ ERROR: User wallet not found.";
+
+        double totalAmount = cart.getTotal();
+        double baseRate = SURGE_ACTIVE ? totalAmount * SURGE_MULTIPLIER : totalAmount;
+
+        double discount = 0;
+        if (couponCode != null && !couponCode.isEmpty()) {
+            List<String> resIds = cart.items.stream().map(i -> i.restaurantId).distinct().toList();
+            for (String rid : resIds) {
+                Restaurant r = dbService.getAllRestaurants().stream().filter(rest -> rest.id.equals(rid)).findFirst().orElse(null);
+                if (r != null) {
+                    Optional<Coupon> couponOpt = r.coupons.stream().filter(c -> c.code.equalsIgnoreCase(couponCode)).findFirst();
+                    if (couponOpt.isPresent()) {
+                        discount = couponOpt.get().calculateDiscount(baseRate);
+                        break;
+                    }
+                }
+            }
+        }
+
+        double finalAmount = baseRate - discount;
+        if (!wallet.deductAmount(finalAmount, "Checkout Cart" + (discount > 0 ? " (" + couponCode + ")" : ""))) {
+            return "❌ PAYMENT DECLINED: Insufficient funds. Need ₹" + finalAmount + ", Balance ₹" + wallet.balance;
+        }
+        dbService.saveWallet(wallet);
+
+        StringBuilder response = new StringBuilder("✅ CHECKOUT SUCCESS: Paid ₹" + finalAmount + "\n");
+        UserOrderHistory userHistory = dbService.getHistory(userId);
+        if (userHistory == null) userHistory = new UserOrderHistory(userId);
+        List<OrderHistoryEntry> history = userHistory.history;
+
+        int maxEstimatedTime = 0;
+
+        for (CartItem item : cart.items) {
+            MenuItem food = getItemDetails(item.restaurantId, item.itemName);
+
+            int estimatedTime = calculateDeliveryTime(item.restaurantId);
+            maxEstimatedTime = Math.max(maxEstimatedTime, estimatedTime);
+
+            double[] coords = RESTAURANT_COORDS.getOrDefault(item.restaurantId, new double[]{22.5726, 72.9290});
+            Order order = new Order(item.quantity + "x " + item.itemName, item.restaurantName, estimatedTime, coords[0], coords[1], USER_DEFAULT_COORDS[0], USER_DEFAULT_COORDS[1]);
+            order.userId = userId;
+            order.restaurantId = item.restaurantId;
+            order.paidAmount = item.getLineTotal(); 
+            order.discountApplied = discount; 
+            order.couponCode = couponCode;
+            dbService.saveOrder(order);
+            response.append("- Order ID: ").append(order.orderId).append(" (").append(item.itemName).append(")\n");
+            
+            history.add(new OrderHistoryEntry(order.orderId, item.itemName, item.restaurantId, item.restaurantName, item.getLineTotal(), couponCode, item.customizations, (food != null ? food.cuisine : "")));
+        dbService.saveHistory(userHistory);
+            userProfileService.updateUserStats(userId, item.getLineTotal(), food != null ? food.cuisine : "");
+            userProfileService.updateRestaurantPreference(userId, item.restaurantId);
+        }
+        
+        cart.clear();
+        dbService.saveCart(cart);
+        response.append("🛵 Delivery in ~").append(maxEstimatedTime).append(" mins. New Balance: ₹").append(wallet.balance);
+        return response.toString();
+    }
+
+    // ================== RECOMMENDATIONS & HISTORY ==================
+    
+    @GetMapping("/recommendations")
+    public List<Map<String, Object>> getRecommendations(@RequestParam String userId) {
+        UserProfile profile = userProfileService.getUserProfile(userId);
+        UserOrderHistory userHistory = dbService.getHistory(userId);
+        List<OrderHistoryEntry> history = userHistory != null ? userHistory.history : new ArrayList<>();
+        
+        Map<String, Double> itemScores = new HashMap<>();
+        for (OrderHistoryEntry entry : history) {
+            itemScores.put(entry.itemName, itemScores.getOrDefault(entry.itemName, 0.0) + 10.0);
+        }
+        
+        List<Map<String, Object>> recs = new ArrayList<>();
+        int currentHour = java.time.LocalTime.now().getHour();
+        
+        for (Restaurant r : dbService.getAllRestaurants()) {
+            double prepScore = profile.restaurantPreferences.getOrDefault(r.id, 0.5) * 10;
+            for (MenuItem item : r.menu) {
+                double score = itemScores.getOrDefault(item.name, 0.0) + prepScore;
+                
+                if (profile.preferences.cuisineConfidence.containsKey(item.cuisine)) {
+                    score += profile.preferences.cuisineConfidence.get(item.cuisine) * 5;
+                }
+                
+                boolean isBreakfastTime = currentHour >= 6 && currentHour < 11;
+                if (isBreakfastTime && (item.name.toLowerCase().contains("dosa") || item.name.toLowerCase().contains("idli"))) score += 15;
+                if (!isBreakfastTime && item.name.toLowerCase().contains("biryani")) score += 15;
+                
+                Map<String, Object> map = new HashMap<>();
+                map.put("restaurantId", r.id);
+                map.put("restaurant", r.name);
+                map.put("item", item.name);
+                map.put("price", item.price);
+                map.put("score", score);
+                recs.add(map);
+            }
+        }
+        
+        recs.sort((a,b) -> Double.compare((Double)b.get("score"), (Double)a.get("score")));
+        return recs.stream().limit(5).collect(Collectors.toList());
+    }
+
+    @GetMapping("/history")
+    public List<OrderHistoryEntry> getOrderHistory(@RequestParam String userId) {
+        UserOrderHistory userHistory = dbService.getHistory(userId);
+        return userHistory != null ? userHistory.history : new ArrayList<>();
+    }
+
+    @PostMapping("/reorder")
+    public String reorder(@RequestParam String userId, @RequestParam String orderId) {
+        UserOrderHistory userHistory = dbService.getHistory(userId);
+        List<OrderHistoryEntry> history = userHistory != null ? userHistory.history : new ArrayList<>();
+        OrderHistoryEntry entry = history.stream().filter(h -> h.orderId.equals(orderId)).findFirst().orElse(null);
+        if (entry == null) return "❌ Order " + orderId + " not found in history.";
+        return placeOrder(entry.restaurantId, entry.itemName, userId, "");
+    }
+
+    private int calculateDeliveryTime(String restaurantId) {
+        double[] rPos = RESTAURANT_COORDS.getOrDefault(restaurantId, new double[]{22.5726, 72.9290});
+        double lat1 = Math.toRadians(rPos[0]);
+        double lon1 = Math.toRadians(rPos[1]);
+        double lat2 = Math.toRadians(USER_DEFAULT_COORDS[0]);
+        double lon2 = Math.toRadians(USER_DEFAULT_COORDS[1]);
+
+        double r = 6371; // km
+        double dlat = lat2 - lat1;
+        double dlon = lon2 - lon1;
+        double a = Math.pow(Math.sin(dlat / 2), 2) + Math.cos(lat1) * Math.cos(lat2) * Math.pow(Math.sin(dlon / 2), 2);
+        double c = 2 * Math.asin(Math.sqrt(a));
+        double distanceKm = r * c;
+
+        return 15 + (int) Math.round(distanceKm * 2.0); // 15 mins prep + 2 mins/km
+    }
+
     // ================== ORDER (with 🆕 delivery tracking init) ==================
 
     @PostMapping("/order")
@@ -499,15 +735,13 @@ public class FakeSwiggyController {
                              @RequestParam(defaultValue = "user_123") String userId,
                              @RequestParam(defaultValue = "") String couponCode) {
 
-        UserWallet wallet = WALLETS.get(userId);
+        UserWallet wallet = dbService.getWallet(userId);
         if (wallet == null) return "❌ ERROR: User wallet not found for " + userId;
 
         MenuItem food = getItemDetails(restaurantId, item);
         if (food == null) return "❌ ERROR: Item '" + item + "' not found at restaurant " + restaurantId;
 
-        Restaurant res = RESTAURANTS.stream().filter(r -> r.id.equals(restaurantId)).findFirst().get();
-
-        if (food.stockCount <= 0) return "❌ OUT OF STOCK: " + food.name;
+        Restaurant res = dbService.getAllRestaurants().stream().filter(r -> r.id.equals(restaurantId)).findFirst().get();
 
         // Calculate price with surge
         double basePrice = SURGE_ACTIVE ? food.price * SURGE_MULTIPLIER : food.price;
@@ -534,13 +768,11 @@ public class FakeSwiggyController {
         if (!wallet.deductAmount(finalAmount, reason)) {
             return "❌ PAYMENT DECLINED: Insufficient funds. Balance: ₹" + wallet.balance + ", Required: ₹" + finalAmount;
         }
-
-        // Reduce stock
-        food.stockCount--;
+        dbService.saveWallet(wallet);
 
         // Create order WITH delivery tracking info + payment details
         double[] resCords = RESTAURANT_COORDS.getOrDefault(restaurantId, new double[]{22.5726, 72.9290});
-        int deliveryTime = 5; // 5 minutes for demo speed (instead of 30)
+        int deliveryTime = calculateDeliveryTime(restaurantId);
         Order newOrder = new Order(
                 food.name + " from " + res.name,
                 res.name,
@@ -556,7 +788,14 @@ public class FakeSwiggyController {
         newOrder.discountApplied = discount;
         newOrder.couponCode = couponCode;
 
-        ACTIVE_ORDERS.put(newOrder.orderId, newOrder);
+        dbService.saveOrder(newOrder);
+        
+        // 🆕 Add to history
+        UserOrderHistory userHistory = dbService.getHistory(userId);
+        if (userHistory == null) userHistory = new UserOrderHistory(userId);
+        List<OrderHistoryEntry> history = userHistory.history;
+        history.add(new OrderHistoryEntry(newOrder.orderId, food.name, restaurantId, res.name, finalAmount, couponCode, new ArrayList<>(), food.cuisine));
+        dbService.saveHistory(userHistory);
 
         // Update user learning (cuisine + restaurant preference)
         userProfileService.updateUserStats(userId, finalAmount, food.cuisine);
@@ -581,7 +820,7 @@ public class FakeSwiggyController {
     public Map<String, Object> trackOrder(@PathVariable String orderId) {
         Map<String, Object> tracking = new LinkedHashMap<>();
 
-        Order order = ACTIVE_ORDERS.get(orderId);
+        Order order = dbService.getOrder(orderId);
         if (order == null) {
             tracking.put("error", "Order not found: " + orderId);
             return tracking;
@@ -589,6 +828,7 @@ public class FakeSwiggyController {
 
         String currentStatus = order.calculateCurrentStatus();
         order.status = currentStatus; // Update stored status
+        dbService.saveOrder(order);
         double[] partnerPos = order.getDeliveryPartnerPosition();
 
         tracking.put("order_id", order.orderId);
@@ -653,7 +893,7 @@ public class FakeSwiggyController {
     // ================== HELPERS ==================
 
     public MenuItem getItemDetails(String restaurantId, String itemName) {
-        Optional<Restaurant> res = RESTAURANTS.stream().filter(r -> r.id.equals(restaurantId)).findFirst();
+        Optional<Restaurant> res = dbService.getAllRestaurants().stream().filter(r -> r.id.equals(restaurantId)).findFirst();
         if (res.isPresent()) {
             return res.get().menu.stream()
                     .filter(i -> i.name.equalsIgnoreCase(itemName))
@@ -663,11 +903,12 @@ public class FakeSwiggyController {
     }
 
     public double getWalletBalance(String userId) {
-        return WALLETS.containsKey(userId) ? WALLETS.get(userId).balance : 0.0;
+        UserWallet wallet = dbService.getWallet(userId);
+        return wallet != null ? wallet.balance : 0.0;
     }
 
     public UserWallet getWallet(String userId) {
-        return WALLETS.get(userId);
+        return dbService.getWallet(userId);
     }
 
     public String getLastOrderId() {
@@ -675,7 +916,7 @@ public class FakeSwiggyController {
     }
 
     public String getOrderStatus(String orderId) {
-        Order order = ACTIVE_ORDERS.get(orderId);
+        Order order = dbService.getOrder(orderId);
         return order != null ? order.calculateCurrentStatus() : "Not Found";
     }
 
@@ -700,7 +941,7 @@ public class FakeSwiggyController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", orderId);
 
-        Order order = ACTIVE_ORDERS.get(orderId);
+        Order order = dbService.getOrder(orderId);
         if (order == null) {
             result.put("success", false);
             result.put("message", "❌ Order not found: " + orderId);
@@ -711,7 +952,7 @@ public class FakeSwiggyController {
         String currentStatus = order.calculateCurrentStatus();
         result.put("order_status_at_cancellation", currentStatus);
 
-        UserWallet wallet = WALLETS.get(userId);
+        UserWallet wallet = dbService.getWallet(userId);
 
         switch (currentStatus) {
             case "PLACED" -> {
@@ -727,11 +968,6 @@ public class FakeSwiggyController {
                 if (wallet != null) {
                     wallet.refund(refundAmount, "Cancellation refund for " + orderId);
                 }
-
-                // Restore stock
-                String itemName = order.item.split(" from ")[0];
-                MenuItem food = getItemDetails(order.restaurantId, itemName);
-                if (food != null) food.stockCount++;
 
                 result.put("success", true);
                 result.put("refund_type", "FULL_REFUND");
@@ -814,7 +1050,7 @@ public class FakeSwiggyController {
         result.put("order_id", orderId);
         result.put("issue_type", issueType);
 
-        Order order = ACTIVE_ORDERS.get(orderId);
+        Order order = dbService.getOrder(orderId);
         if (order == null) {
             result.put("success", false);
             result.put("message", "❌ Order not found: " + orderId);
@@ -837,7 +1073,7 @@ public class FakeSwiggyController {
             return result;
         }
 
-        UserWallet wallet = WALLETS.get(userId);
+        UserWallet wallet = dbService.getWallet(userId);
         double refundAmount = 0;
         String resolution;
         String message;

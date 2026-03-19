@@ -24,7 +24,7 @@ public class UserProfileService {
 
         // 🆕 Dislikes & Blacklist
         u1.preferences.dislikes.addAll(List.of("Soggy crust", "Stale bun"));
-        u1.preferences.blacklistedRestaurants.add("res_2"); // Blacklisted Burger King
+        u1.preferences.blacklistedRestaurants.add("res_2"); // Blacklisted Bombay Burger Co.
 
         // 🆕 Cuisine Confidence (high for known cuisines, absent for unknown)
         u1.preferences.cuisineConfidence.put("Italian", 0.9);
@@ -43,11 +43,14 @@ public class UserProfileService {
         // 🆕 Autonomy Level
         u1.autonomyLevel = "BALANCED";
 
+        // 🆕 Language Preference
+        u1.languagePreference = "English";
+
         // Restaurant Preferences (past positive experiences)
-        u1.restaurantPreferences.put("res_1", 0.95);  // Loves Luigi's Italian (premium pizza)
+        u1.restaurantPreferences.put("res_1", 0.95);  // Loves Sharma's Kitchen (premium pizza/North Indian)
         u1.restaurantPreferences.put("res_3", 0.7);   // Has ordered from Spice Garden before
-        u1.restaurantPreferences.put("res_4", 0.6);   // Tried Pizza Hut, it's okay
-        // Note: res_5 (McDonald's), res_6 (Dosa Plaza) — never ordered → default 0.5
+        u1.restaurantPreferences.put("res_4", 0.6);   // Tried Oven Story Pizza, it's okay
+        // Note: res_5 (Desi Bites), res_6 (Dosa Plaza) — never ordered → default 0.5
 
         MOCK_DB.put("user_123", u1);
 
@@ -61,10 +64,11 @@ public class UserProfileService {
         u2.orderingBehavior.avgOrderValue = 100;
         u2.orderingBehavior.totalOrders = 2;
         u2.autonomyLevel = "CONSERVATIVE"; // New user → always confirm
+        u2.languagePreference = "Hindi";   // 🆕 Setting language to Hindi for testing
 
         // Budget user prefers affordable restaurants
-        u2.restaurantPreferences.put("res_4", 0.8);   // Loves Pizza Hut (budget-friendly)
-        u2.restaurantPreferences.put("res_5", 0.7);   // Likes McDonald's (cheap burgers)
+        u2.restaurantPreferences.put("res_4", 0.8);   // Loves Oven Story Pizza (budget-friendly)
+        u2.restaurantPreferences.put("res_5", 0.7);   // Likes Desi Bites (cheap burgers/snacks)
         u2.restaurantPreferences.put("res_6", 0.75);  // Likes Dosa Plaza (cheapest dosa)
 
         MOCK_DB.put("user_456", u2);
@@ -109,6 +113,19 @@ public class UserProfileService {
         user.restaurantPreferences.put(restaurantId, newPref);
         MOCK_DB.put(userId, user);
         System.out.println("🏪 UPDATED RESTAURANT PREF: " + restaurantId + " = " + newPref);
+    }
+
+    // 🆕 4. UPDATE: Explicit user settings updates
+    public void updateUserPreferences(String userId, String language, List<String> allergies, String autonomyLevel) {
+        UserProfile user = getUserProfile(userId);
+        if (language != null && !language.isEmpty()) user.languagePreference = language;
+        if (allergies != null) {
+            user.preferences.allergies.clear();
+            user.preferences.allergies.addAll(allergies);
+        }
+        if (autonomyLevel != null && !autonomyLevel.isEmpty()) user.autonomyLevel = autonomyLevel;
+        MOCK_DB.put(userId, user);
+        System.out.println("⚙️ UPDATED SETTINGS FOR: " + userId);
     }
 
     // 4. RESET: The "Forget Me" Logic

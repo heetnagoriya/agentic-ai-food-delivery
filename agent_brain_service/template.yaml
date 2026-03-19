@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CAFE Agent Brain Service (Spring Boot 3 + Spring AI)
+
+Globals:
+  Function:
+    Timeout: 30 # Seconds
+    MemorySize: 2048 # MB
+    Environment:
+      Variables:
+        SPRING_PROFILES_ACTIVE: aws
+
+Resources:
+  # === DYNAMODB TABLES ===
+  FoodDeliveryUsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_Users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  FoodDeliveryOrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_Orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+  FoodDeliveryRestaurantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_Restaurants
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  FoodDeliveryCartsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_Carts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  FoodDeliveryWalletsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_Wallets
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  FoodDeliveryHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: FoodDelivery_History
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  # === LAMBDA FUNCTION ===
+  AgentBrainFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: com.project.agent_brain_service.StreamLambdaHandler::handleRequest
+      Runtime: java17
+      CodeUri: .
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryUsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryOrdersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryRestaurantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryCartsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryWalletsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FoodDeliveryHistoryTable
+      Events:
+        ProxyResource:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: any
+        RootResource:
+          Type: Api
+          Properties:
+            Path: /
+            Method: any
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod environment"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"

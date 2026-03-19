@@ -250,6 +250,120 @@
     backdrop-filter: var(--glass-blur);
 }
 
+.inventory-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inventory-expand-all-btn {
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: var(--radius-sm);
+    color: var(--accent-indigo);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.inventory-expand-all-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.4);
+    transform: translateY(-1px);
+}
+
+.inventory-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.inventory-restaurant-section {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color var(--transition-fast);
+}
+
+.inventory-restaurant-section:hover {
+    border-color: var(--border-hover);
+}
+
+.inventory-restaurant-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(99, 102, 241, 0.04);
+    border: none;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    text-align: left;
+    font-family: var(--font-ui);
+}
+
+.inventory-restaurant-header:hover {
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.inventory-restaurant-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.inventory-restaurant-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.inventory-restaurant-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.inventory-item-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.inventory-expand-icon {
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: transform 0.25s ease;
+    flex-shrink: 0;
+}
+
+.inventory-expand-icon.expanded {
+    transform: rotate(90deg);
+}
+
+.inventory-restaurant-items {
+    animation: expandIn 0.25s ease-out;
+    border-top: 1px solid var(--border-subtle);
+}
+
+@keyframes expandIn {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 500px;
+    }
+}
+
 .inventory-scroll {
     overflow-x: auto;
     margin-top: 4px;
@@ -370,7 +484,54 @@
 .coupon-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color var(--transition-fast);
+}
+
+.coupon-group:hover {
+    border-color: var(--border-hover);
+}
+
+.coupon-restaurant-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(52, 211, 153, 0.04);
+    border: none;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    text-align: left;
+    font-family: var(--font-ui);
+}
+
+.coupon-restaurant-header:hover {
+    background: rgba(52, 211, 153, 0.08);
+}
+
+.coupon-restaurant-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.coupon-count {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: rgba(52, 211, 153, 0.12);
+    border-radius: var(--radius-full);
+    color: var(--accent-emerald);
+    font-weight: 600;
+}
+
+.coupon-list-animated {
+    animation: expandIn 0.25s ease-out;
+    border-top: 1px solid var(--border-subtle);
+    padding: 8px;
 }
 
 .coupon-restaurant {

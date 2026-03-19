@@ -8,6 +8,13 @@ package com.project.agent_brain_service;
  *   - "60% off up to ₹120 on orders above ₹199"  → percentOff=60, maxDiscount=120, minOrder=199
  *   - "Flat ₹175 off on orders above ₹350"        → flatOff=175, minOrder=350
  */
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+
+@Data
+@NoArgsConstructor
+@DynamoDbBean
 public class Coupon {
 
     public String code;

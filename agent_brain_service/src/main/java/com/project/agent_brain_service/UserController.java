@@ -2,6 +2,7 @@ package com.project.agent_brain_service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 /**
  * User management endpoints.
@@ -20,6 +21,18 @@ public class UserController {
 
     @GetMapping("/profile")
     public UserProfile getProfile(@RequestParam String userId) {
+        return userProfileService.getUserProfile(userId);
+    }
+
+    static class ProfileUpdateRequest {
+        public String languagePreference;
+        public List<String> allergies;
+        public String autonomyLevel;
+    }
+
+    @PostMapping("/profile")
+    public UserProfile updateProfile(@RequestParam String userId, @RequestBody ProfileUpdateRequest req) {
+        userProfileService.updateUserPreferences(userId, req.languagePreference, req.allergies, req.autonomyLevel);
         return userProfileService.getUserProfile(userId);
     }
 

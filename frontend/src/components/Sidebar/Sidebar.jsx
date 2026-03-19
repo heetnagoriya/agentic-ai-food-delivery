@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import OrderHistoryModal from './OrderHistoryModal';
+import UserSettingsModal from './UserSettingsModal';
 import './Sidebar.css';
 
 export default function Sidebar({
@@ -9,7 +12,12 @@ export default function Sidebar({
     orders,
     collapsed,
     onToggleCollapse,
+    onSend,
+    theme,
+    onToggleTheme
 }) {
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
     const orderList = orders ? Object.values(orders) : [];
 
     return (
@@ -42,13 +50,19 @@ export default function Sidebar({
                     </button>
                 </div>
 
-                {/* New Chat */}
+                {/* Actions */}
                 <div className="sidebar-actions">
-                    <button className="new-chat-btn" id="btn-new-chat" onClick={onNewChat}>
+                    <button className="new-chat-btn" id="btn-new-chat" onClick={onNewChat} style={{marginBottom: '10px'}}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                         </svg>
                         New Chat
+                    </button>
+                    <button className="new-chat-btn" id="btn-order-history" onClick={() => setShowHistoryModal(true)} style={{background: 'var(--surface-light)', color: 'var(--text-primary)', marginBottom: '10px'}}>
+                        📜 Full Order History
+                    </button>
+                    <button className="new-chat-btn" id="btn-settings" onClick={() => setShowSettingsModal(true)} style={{background: 'var(--surface-light)', color: 'var(--text-primary)'}}>
+                        ⚙️ Settings
                     </button>
                 </div>
 
@@ -84,6 +98,9 @@ export default function Sidebar({
 
                 {/* Bottom */}
                 <div className="sidebar-bottom">
+                    <button className="sidebar-link-btn" id="btn-toggle-theme" onClick={onToggleTheme}>
+                        {theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode'}
+                    </button>
                     <button className="sidebar-link-btn" id="btn-reset-memory" onClick={onResetMemory}>
                         🧹 Reset Agent Memory
                     </button>
@@ -107,6 +124,21 @@ export default function Sidebar({
             </aside>
 
             {!collapsed && <div className="sidebar-overlay" onClick={onToggleCollapse} />}
+
+            {showHistoryModal && (
+                <OrderHistoryModal 
+                    userId={userId} 
+                    onClose={() => setShowHistoryModal(false)}
+                    onReorder={onSend}
+                />
+            )}
+
+            {showSettingsModal && (
+                <UserSettingsModal 
+                    userId={userId} 
+                    onClose={() => setShowSettingsModal(false)}
+                />
+            )}
         </>
     );
 }

@@ -4,6 +4,14 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
+
+@Data
+@NoArgsConstructor
+@DynamoDbBean
 public class Order {
     public String orderId;
     public String item;
@@ -39,6 +47,11 @@ public class Order {
     public String issueResolution;      // FULL_REFUND, PARTIAL_REFUND, COUPON_COMPENSATION, REPLACEMENT
     public double issueRefundAmount;
 
+    @DynamoDbPartitionKey
+    public String getOrderId() {
+        return orderId;
+    }
+
     public Order(String item, String restaurantName, int deliveryTimeMins,
                  double restaurantLat, double restaurantLng,
                  double userLat, double userLng) {
@@ -57,7 +70,7 @@ public class Order {
 
         // Random delivery partner
         String[] partners = {"Rahul K.", "Priya S.", "Amit R.", "Deepa M.", "Karan J."};
-        String[] vehicles = {"🏍️ Bike", "🛵 Scooter", "🚲 Bicycle"};
+        String[] vehicles = {"🏍️ Bajaj Pulsar", "🛵 Honda Activa", "🏍️ Hero Splendor", "🛵 TVS Jupiter"};
         this.deliveryPartnerName = partners[(int) (Math.random() * partners.length)];
         this.deliveryPartnerVehicle = vehicles[(int) (Math.random() * vehicles.length)];
     }
@@ -76,7 +89,7 @@ public class Order {
         if (isCancelled) return "CANCELLED";
 
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = deliveryTimeMins * 60L;
+        long totalSeconds = 30L; // Fast prototype progression
         double progress = (double) elapsedSeconds / totalSeconds;
 
         if (progress >= 0.9)      return "DELIVERED";
@@ -92,7 +105,7 @@ public class Order {
         if (isCancelled) return new double[]{restaurantLat, restaurantLng};
 
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = deliveryTimeMins * 60L;
+        long totalSeconds = 30L; // Fast prototype progression
         double progress = Math.min(1.0, (double) elapsedSeconds / totalSeconds);
 
         // Only start moving after 50% (OUT_FOR_DELIVERY phase)
@@ -110,7 +123,7 @@ public class Order {
     public int getEstimatedMinutesRemaining() {
         if (isCancelled) return 0;
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = deliveryTimeMins * 60L;
+        long totalSeconds = 30L; // Fast prototype progression
         long remaining = (totalSeconds - elapsedSeconds) / 60;
         return (int) Math.max(0, remaining);
     }
