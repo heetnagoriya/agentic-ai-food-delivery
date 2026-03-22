@@ -1,79 +1,104 @@
 const STATUS_STEPS = ['PLACED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED'];
 
-function getStatusIndex(status) {
-    const idx = STATUS_STEPS.indexOf(status);
-    return idx >= 0 ? idx : 0;
+const STATUS_META = {
+    PLACED:            { emoji: '📋', label: 'Placed',       color: 'var(--text-muted)' },
+    PREPARING:         { emoji: '👨‍🍳', label: 'Preparing',    color: '#f59e0b' },
+    OUT_FOR_DELIVERY:  { emoji: '🛵', label: 'On the way',   color: '#22c55e' },
+    DELIVERED:         { emoji: '✅', label: 'Delivered',    color: '#22c55e' },
+    CANCELLED:         { emoji: '❌', label: 'Cancelled',    color: '#ef4444' },
+};
+
+function getStatusMeta(status) {
+    return STATUS_META[status] || { emoji: '•', label: status, color: 'var(--text-muted)' };
+}
+
+function OrderProgressBar({ status }) {
+    const statusIdx = STATUS_STEPS.indexOf(status);
+    if (statusIdx < 0) return null;
+    const progress = (statusIdx / (STATUS_STEPS.length - 1)) * 100;
+
+    return (
+        <div className="order-progress-container">
+            <div className="order-progress-track">
+                <div
+                    className="order-progress-fill"
+                    style={{ width: `${progress}%` }}
+                />
+            </div>
+            <div className="order-progress-steps">
+                {STATUS_STEPS.map((step, i) => (
+                    <div
+                        key={step}
+                        className={`order-step-dot ${i <= statusIdx ? 'active' : ''}`}
+                        title={step.replace(/_/g, ' ')}
+                    />
+                ))}
+            </div>
+        </div>
+    );
 }
 
 function OrderCard({ order }) {
-    const statusIdx = getStatusIndex(order.status);
-    const isCancelled = order.isCancelled;
+    const isCancelled = order.isCancelled || order.status === 'CANCELLED';
+    const meta = isCancelled ? getStatusMeta('CANCELLED') : getStatusMeta(order.status);
 
     return (
-        <div className={`order-card ${isCancelled ? 'order-cancelled' : ''}`} id={`order-${order.orderId}`}>
-            <div className="order-card-header">
-                <span className="order-id">{order.orderId}</span>
-                {isCancelled ? (
-                    <span className="order-status-cancelled">CANCELLED</span>
-                ) : (
-                    <span className="order-status-badge status-shimmer">{order.status}</span>
-                )}
-            </div>
-            <div className="order-item-name">{order.item}</div>
-            <div className="order-details">
-                <span className="order-detail">
-                    {order.deliveryPartnerVehicle} {order.deliveryPartnerName}
-                </span>
-                <span className="order-amount">₹{order.paidAmount}</span>
+        <div className={`sp-order-card ${isCancelled ? 'order-card-cancelled' : 'order-card-active'}`} id={`order-${order.orderId}`}>
+            <div className="sp-order-top">
+                <div className="sp-order-item">{order.item}</div>
+                <span className="sp-order-amount">₹{order.paidAmount}</span>
             </div>
 
-            {!isCancelled && (
-                <div className="order-progress">
-                    <div className="progress-track">
-                        {STATUS_STEPS.map((step, i) => (
-                            <div key={step} className="progress-node-wrapper">
-                                <div className={`progress-node ${i <= statusIdx ? 'progress-node-active' : ''}`} />
-                                {i < STATUS_STEPS.length - 1 && (
-                                    <div className={`progress-line ${i < statusIdx ? 'progress-line-active' : ''}`} />
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                    <div className="progress-labels">
-                        {STATUS_STEPS.map((step) => (
-                            <span key={step} className="progress-label">{step.replace(/_/g, ' ')}</span>
-                        ))}
-                    </div>
-                </div>
+            <div className="sp-order-meta">
+                <span className="sp-order-restaurant">{order.restaurantName || order.restaurant}</span>
+                <span className="sp-order-id">{order.orderId?.slice(-8)}</span>
+            </div>
+
+            <div className="sp-order-status-row">
+                <span className="sp-status-emoji">{meta.emoji}</span>
+                <span className="sp-status-label" style={{ color: meta.color }}>
+                    {meta.label}
+                </span>
+                {order.deliveryPartnerName && !isCancelled && (
+                    <span className="sp-delivery-partner">· {order.deliveryPartnerName}</span>
+                )}
+            </div>
+
+            {!isCancelled && order.status !== 'DELIVERED' && (
+                <OrderProgressBar status={order.status} />
             )}
         </div>
     );
 }
 
 export default function ActiveOrders({ orders }) {
-    if (!orders || Object.keys(orders).length === 0) {
-        return (
-            <div className="orders-empty" id="active-orders-empty">
-                <div className="section-header"><span>🛵 Active Orders</span></div>
-                <div className="empty-mini">
-                    <span className="empty-mini-icon">📭</span>
-                    <p>No active orders</p>
-                </div>
-            </div>
-        );
-    }
+    const orderList = Object.values(orders || {});
+    const activeCount = orderList.filter(o => !o.isCancelled && o.status !== 'DELIVERED').length;
 
     return (
-        <div className="active-orders" id="active-orders">
-            <div className="section-header">
-                <span>🛵 Active Orders</span>
-                <span className="order-count">{Object.keys(orders).length}</span>
+        <div className="sp-card" id="active-orders">
+            <div className="sp-card-header">
+                <span className="sp-card-label">
+                    <span className="sp-card-icon">🛵</span>
+                    Active Orders
+                </span>
+                {activeCount > 0 && (
+                    <span className="sp-count-badge">{activeCount}</span>
+                )}
             </div>
-            <div className="order-list">
-                {Object.values(orders).map((order) => (
-                    <OrderCard key={order.orderId} order={order} />
-                ))}
-            </div>
+
+            {orderList.length === 0 ? (
+                <div className="sp-empty">
+                    <span className="sp-empty-icon">📭</span>
+                    <span>No active orders</span>
+                </div>
+            ) : (
+                <div className="sp-order-list">
+                    {orderList.map((order) => (
+                        <OrderCard key={order.orderId} order={order} />
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

@@ -10,9 +10,13 @@ export default function StatePanel({ worldState, userId, onToggleSurge }) {
     if (!worldState) {
         return (
             <aside className="state-panel" id="state-panel">
+                <div className="state-panel-header">
+                    <span className="state-panel-title">Live State</span>
+                    <span className="state-panel-dot loading" />
+                </div>
                 <div className="state-panel-loading">
                     <div className="state-spinner" />
-                    <p>Loading world state...</p>
+                    <p>Connecting to world state…</p>
                 </div>
             </aside>
         );
@@ -26,23 +30,17 @@ export default function StatePanel({ worldState, userId, onToggleSurge }) {
     return (
         <aside className="state-panel" id="state-panel">
             <div className="state-panel-header">
-                <span className="state-panel-title">🌐 Real-Time State</span>
-                <span className="state-panel-dot" />
+                <div className="state-panel-title-row">
+                    <span className="state-panel-title">Live State</span>
+                    <span className="state-panel-dot" />
+                </div>
+                <SurgeBanner active={surgeActive} onToggle={onToggleSurge} />
             </div>
             <div className="state-panel-content">
-                <SurgeBanner active={surgeActive} onToggle={onToggleSurge} />
-                {!surgeActive && onToggleSurge && (
-                    <button
-                        className="surge-toggle-btn"
-                        id="surge-toggle-btn"
-                        onClick={onToggleSurge}
-                    >
-                        ⛈️ Enable Surge Pricing
-                    </button>
-                )}
-                <MenuSearch />
-                <WalletCard wallet={wallet} />
+                {/* Wallet must receive the logged-in userId for Add Money to work */}
+                <WalletCard wallet={wallet} userId={userId} />
                 <ActiveOrders orders={orders} />
+                <MenuSearch />
                 <InventoryTable restaurants={restaurants} />
                 <CouponDisplay restaurants={restaurants} />
             </div>

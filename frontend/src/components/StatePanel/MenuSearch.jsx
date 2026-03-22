@@ -1,6 +1,13 @@
 import { useState, useCallback, useRef } from 'react';
 import { searchMenu } from '../../utils/api';
 
+const QUICK_SEARCHES = ['pizza', 'burger', 'dosa', 'biryani'];
+
+function getCuisineEmoji(cuisine) {
+    const map = { Italian: '🍕', 'Fast Food': '🍔', 'South Indian': '🥘', Indian: '🍛' };
+    return map[cuisine] || '🍽️';
+}
+
 export default function MenuSearch() {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
@@ -30,16 +37,20 @@ export default function MenuSearch() {
     const handleChange = (e) => {
         const value = e.target.value;
         setQuery(value);
-
-        // Debounce: wait 400ms after user stops typing
         if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => doSearch(value), 400);
+        debounceRef.current = setTimeout(() => doSearch(value), 350);
     };
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (debounceRef.current) clearTimeout(debounceRef.current);
         doSearch(query);
+    };
+
+    const handleQuickSearch = (term) => {
+        setQuery(term);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        doSearch(term);
     };
 
     const handleClear = () => {
@@ -50,64 +61,81 @@ export default function MenuSearch() {
     };
 
     return (
-        <div className="menu-search" id="menu-search">
-            <div className="section-header">
-                <span>🔍 Menu Search</span>
+        <div className="sp-card" id="menu-search">
+            <div className="sp-card-header">
+                <span className="sp-card-label">
+                    <span className="sp-card-icon">🔍</span>
+                    Menu Search
+                </span>
             </div>
-            <form className="menu-search-form" onSubmit={handleSubmit}>
-                <div className="menu-search-input-wrapper">
+
+            <form className="ms-form" onSubmit={handleSubmit} id="menu-search-form">
+                <div className="ms-input-wrapper">
+                    <span className="ms-search-icon">⌕</span>
                     <input
                         type="text"
-                        className="menu-search-input"
+                        className="ms-input"
                         id="menu-search-input"
                         value={query}
                         onChange={handleChange}
-                        placeholder="Search food... (pizza, dosa, burger)"
+                        placeholder="pizza, dosa, burger…"
                         autoComplete="off"
                     />
                     {query && (
-                        <button
-                            type="button"
-                            className="menu-search-clear"
-                            onClick={handleClear}
-                            aria-label="Clear search"
-                        >
+                        <button type="button" className="ms-clear-btn" onClick={handleClear} aria-label="Clear">
                             ✕
                         </button>
                     )}
                 </div>
             </form>
 
+            {/* Quick search chips */}
+            {!hasSearched && !query && (
+                <div className="ms-quick-chips">
+                    {QUICK_SEARCHES.map((term) => (
+                        <button
+                            key={term}
+                            className="ms-chip"
+                            onClick={() => handleQuickSearch(term)}
+                        >
+                            {term}
+                        </button>
+                    ))}
+                </div>
+            )}
+
             {isSearching && (
-                <div className="menu-search-loading">
-                    <span className="menu-search-spinner" />
-                    Searching...
+                <div className="ms-loading">
+                    <span className="ms-spinner" />
+                    Searching…
                 </div>
             )}
 
             {!isSearching && hasSearched && results.length === 0 && (
-                <div className="menu-search-empty">
-                    No items found for "{query}"
-                </div>
+                <div className="ms-empty">No results for "{query}"</div>
             )}
 
             {results.length > 0 && (
-                <div className="menu-search-results" id="menu-search-results">
+                <div className="ms-results" id="menu-search-results">
                     {results.map((item, i) => (
-                        <div key={i} className="menu-search-item" id={`search-result-${i}`}>
-                            <div className="menu-search-item-top">
-                                <span className="menu-search-item-name">{item.item}</span>
-                                <span className="menu-search-item-price">₹{item.price}</span>
+                        <div key={i} className="ms-result-item" id={`search-result-${i}`}>
+                            <span className="ms-result-emoji">{getCuisineEmoji(item.cuisine)}</span>
+                            <div className="ms-result-info">
+                                <div className="ms-result-top">
+                                    <span className="ms-result-name">{item.item}</span>
+                                    <span className="ms-result-price">
+                                        ₹{item.price}
+                                        {item.surge_active && <span className="ms-surge-tag"> ⚡</span>}
+                                    </span>
+                                </div>
+                                <div className="ms-result-meta">
+                                    <span className="ms-result-restaurant">{item.restaurant}</span>
+                                    <span className="ms-result-rating">★ {item.restaurant_rating}</span>
+                                </div>
+                                {item.allergy_warning && (
+                                    <div className="ms-allergy-warn">⚠️ {item.allergy_warning}</div>
+                                )}
                             </div>
-                            <div className="menu-search-item-bottom">
-                                <span className="menu-search-item-restaurant">{item.restaurant}</span>
-                                <span className="menu-search-item-rating">
-                                    ★ {item.restaurant_rating} · {item.stock > 0 ? `${item.stock} left` : 'Out of stock'}
-                                </span>
-                            </div>
-                            {item.surge_active && (
-                                <span className="menu-search-surge-tag">⚡ Surge</span>
-                            )}
                         </div>
                     ))}
                 </div>

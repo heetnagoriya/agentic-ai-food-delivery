@@ -10,6 +10,13 @@ const STAGE_LABELS = {
     DELIVERED: 'Delivered! Enjoy your meal 🎉',
 };
 
+const STAGES = ['PLACED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DELIVERED'];
+
+function getStageIndex(status) {
+    const idx = STAGES.indexOf(status);
+    return idx >= 0 ? idx : 0;
+}
+
 export default function DeliveryMap({ order }) {
     const [trackingData, setTrackingData] = useState(null);
     const [expanded, setExpanded] = useState(false);
@@ -36,6 +43,7 @@ export default function DeliveryMap({ order }) {
     const riderName = trackingData?.delivery_partner || order.deliveryPartnerName;
     const riderVehicle = trackingData?.delivery_vehicle || order.deliveryPartnerVehicle || '🏍️';
     const stageLabel = STAGE_LABELS[status] || status;
+    const currentStageIdx = getStageIndex(status);
 
     // Compute progress from coordinates if available
     const coords = trackingData?.coordinates;
@@ -56,8 +64,8 @@ export default function DeliveryMap({ order }) {
     // Fallback progress from status
     if (!coords || progress === 0) {
         if (status === 'PLACED') progress = 5;
-        else if (status === 'PREPARING') progress = 25;
-        else if (status === 'OUT_FOR_DELIVERY') progress = 60;
+        else if (status === 'PREPARING') progress = 30;
+        else if (status === 'OUT_FOR_DELIVERY') progress = 65;
         else if (status === 'DELIVERED') progress = 100;
     }
 
@@ -90,6 +98,22 @@ export default function DeliveryMap({ order }) {
                     <div className="delivery-mini-bar" style={{ width: `${progress}%` }} />
                 </div>
                 <div className="delivery-mini-label">{stageLabel}</div>
+
+                {/* Inline mini timeline with status dots */}
+                <div className="delivery-mini-timeline">
+                    {STAGES.map((stage, i) => {
+                        const isDone = i < currentStageIdx;
+                        const isCurrent = i === currentStageIdx;
+                        return (
+                            <div className="mini-timeline-step" key={stage}>
+                                <div className={`mini-timeline-dot ${isDone ? 'dot-done' : ''} ${isCurrent ? 'dot-current' : ''}`} />
+                                {i < STAGES.length - 1 && (
+                                    <div className={`mini-timeline-line ${isDone ? 'line-done' : ''}`} />
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
             </div>
 
             {/* Fullscreen overlay */}
@@ -117,7 +141,7 @@ export default function DeliveryMap({ order }) {
                                     <path
                                         d="M 40 260 Q 80 230 120 200 T 200 150 T 280 100 T 360 40"
                                         fill="none"
-                                        stroke="var(--border-default)"
+                                        stroke="#3f3f46"
                                         strokeWidth="3"
                                         strokeDasharray="8 4"
                                     />
@@ -125,29 +149,29 @@ export default function DeliveryMap({ order }) {
                                     <path
                                         d="M 40 260 Q 80 230 120 200 T 200 150 T 280 100 T 360 40"
                                         fill="none"
-                                        stroke="var(--accent-primary)"
+                                        stroke="#ea580c"
                                         strokeWidth="3"
                                         strokeDasharray={`${progress * 5} 1000`}
                                     />
                                     {/* Restaurant marker */}
-                                    <circle cx="40" cy="260" r="8" fill="var(--accent-danger)" />
-                                    <text x="55" y="265" fill="var(--text-muted)" fontSize="10" fontFamily="var(--font-ui)">Restaurant</text>
+                                    <circle cx="40" cy="260" r="8" fill="#ef4444" />
+                                    <text x="55" y="265" fill="#a1a1aa" fontSize="10">Restaurant</text>
                                     {/* Destination marker */}
-                                    <circle cx="360" cy="40" r="8" fill="var(--accent-success)" />
-                                    <text x="295" y="30" fill="var(--text-muted)" fontSize="10" fontFamily="var(--font-ui)">Your Location</text>
+                                    <circle cx="360" cy="40" r="8" fill="#22c55e" />
+                                    <text x="295" y="30" fill="#a1a1aa" fontSize="10">Your Location</text>
                                     {/* Rider dot */}
                                     <circle
                                         cx={40 + (320 * progress / 100)}
                                         cy={260 - (220 * progress / 100)}
                                         r="6"
-                                        fill="var(--accent-primary)"
+                                        fill="#ea580c"
                                         className="rider-dot"
                                     />
                                     <circle
                                         cx={40 + (320 * progress / 100)}
                                         cy={260 - (220 * progress / 100)}
                                         r="12"
-                                        fill="rgba(217, 119, 86, 0.2)"
+                                        fill="rgba(234, 88, 12, 0.25)"
                                         className="rider-pulse"
                                     />
                                 </svg>

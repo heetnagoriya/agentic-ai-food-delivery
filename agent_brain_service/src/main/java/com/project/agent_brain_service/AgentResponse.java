@@ -31,6 +31,9 @@ public class AgentResponse {
      *   output: "Found 3 results: Pizza (₹600), Burger (₹150)..."
      *   durationMs: 450
      */
+    @software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean
+    @lombok.Data
+    @lombok.NoArgsConstructor
     public static class TraceStep {
         public String step;
         public String input;

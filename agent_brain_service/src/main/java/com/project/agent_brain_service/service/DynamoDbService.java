@@ -21,6 +21,7 @@ public class DynamoDbService {
     private DynamoDbTable<Cart> cartTable;
     private DynamoDbTable<UserOrderHistory> historyTable;
     private DynamoDbTable<UserWallet> walletTable;
+    private DynamoDbTable<ChatSession> chatTable;
 
     public DynamoDbService(DynamoDbEnhancedClient enhancedClient) {
         this.enhancedClient = enhancedClient;
@@ -34,6 +35,7 @@ public class DynamoDbService {
         cartTable = enhancedClient.table("FoodDelivery_Carts", TableSchema.fromBean(Cart.class));
         historyTable = enhancedClient.table("FoodDelivery_History", TableSchema.fromBean(UserOrderHistory.class));
         walletTable = enhancedClient.table("FoodDelivery_Wallets", TableSchema.fromBean(UserWallet.class));
+        chatTable = enhancedClient.table("FoodDelivery_ChatSessions", TableSchema.fromBean(ChatSession.class));
 
         createTableIfNotExists(userTable);
         createTableIfNotExists(orderTable);
@@ -41,15 +43,30 @@ public class DynamoDbService {
         createTableIfNotExists(cartTable);
         createTableIfNotExists(historyTable);
         createTableIfNotExists(walletTable);
+        createTableIfNotExists(chatTable);
     }
 
     private void createTableIfNotExists(DynamoDbTable<?> table) {
         try {
             table.createTable();
+            try (software.amazon.awssdk.services.dynamodb.DynamoDbClient standardClient =
+                 software.amazon.awssdk.services.dynamodb.DynamoDbClient.create()) {
+
+                software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter waiter =
+                        standardClient.waiter();
+
+                software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest request =
+                        software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest.builder()
+                        .tableName(table.tableName())
+                        .build();
+
+                System.out.println("Waiting for table " + table.tableName() + " to become ACTIVE...");
+                waiter.waitUntilTableExists(request);
+            }
         } catch (ResourceInUseException e) {
-            // Table already exists
+            // Table already exists — fine
         } catch (Exception e) {
-            System.err.println("WARN: Could not create table (might already exist or missing credentials): " + e.getMessage());
+            System.err.println("WARN: Could not create table: " + e.getMessage());
         }
     }
 
@@ -78,4 +95,8 @@ public class DynamoDbService {
     public void saveRestaurant(Restaurant restaurant) { restaurantTable.putItem(restaurant); }
     public Restaurant getRestaurant(String id) { return restaurantTable.getItem(r -> r.key(k -> k.partitionValue(id))); }
     public List<Restaurant> getAllRestaurants() { return restaurantTable.scan().items().stream().collect(Collectors.toList()); }
+
+    // --- Chat Session Operations ---
+    public void saveChat(ChatSession session) { chatTable.putItem(session); }
+    public ChatSession getChat(String userId) { return chatTable.getItem(r -> r.key(k -> k.partitionValue(userId))); }
 }

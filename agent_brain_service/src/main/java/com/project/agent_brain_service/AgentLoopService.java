@@ -28,7 +28,7 @@ public class AgentLoopService {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private static final int MAX_ITERATIONS = 10;
-    private static final int MAX_RETRIES = 10;
+    private static final int MAX_RETRIES = 12;
 
     // Current free-tier model (Feb 2026)
     private static final String MODEL_NAME = "gemini-2.5-flash";
@@ -42,7 +42,7 @@ public class AgentLoopService {
     // ── Per-Key Rate Tracking ──
     // Tracks the last API call timestamp per key to enforce minimum gaps.
     // Free tier: 15 RPM = 1 call per 4 seconds per key.
-    private static final long MIN_GAP_PER_KEY_MS = 4500L; // 4.5s per key (safe margin over 4s)
+    private static final long MIN_GAP_PER_KEY_MS = 4000L; // 4.0s per key (15 RPM = 1 call/4s)
     private final ConcurrentHashMap<String, Long> lastCallTimePerKey = new ConcurrentHashMap<>();
 
     private String getNextApiKey() {
@@ -84,21 +84,14 @@ public class AgentLoopService {
         lastCallTimePerKey.put(apiKey, System.currentTimeMillis());
     }
 
-    private long getCooldownMs() {
-        int numKeys = (apiKeys != null) ? apiKeys.length : 1;
-        // Free tier: 15 RPM per key = 4s/req. With N keys: 4s/N.
-        // Minimum 2s to avoid hammering.
-        return Math.max(2000, MIN_GAP_PER_KEY_MS / numKeys);
-    }
-
     /**
      * Exponential backoff for retry waits.
-     * Starts at 10s, doubles each retry, capped at 60s.
+     * Starts at 3s, doubles each retry, capped at 30s.
      */
     private long getExponentialBackoff(int retryCount) {
-        long baseMs = 10_000L; // 10 seconds
-        long backoff = baseMs * (1L << (retryCount - 1)); // 10s, 20s, 40s, ...
-        return Math.min(backoff, 60_000L); // cap at 60s
+        long baseMs = 3_000L; // 3 seconds
+        long backoff = baseMs * (1L << (retryCount - 1)); // 3s, 6s, 12s, 24s
+        return Math.min(backoff, 30_000L); // cap at 30s
     }
 
     // v1beta required for system_instruction and tools (function calling)
@@ -118,12 +111,7 @@ public class AgentLoopService {
             while (iterations < MAX_ITERATIONS) {
                 iterations++;
 
-                // Cooldown between calls — scales with number of API keys
-                if (iterations > 1) {
-                    long cooldown = getCooldownMs();
-                    System.out.println("💤 Cooling down for " + (cooldown / 1000) + "s (" + (apiKeys != null ? apiKeys.length : 1) + " key(s))...");
-                    Thread.sleep(cooldown);
-                }
+                // Per-key rate limiter handles spacing — no extra cooldown needed
 
                 Map<String, Object> requestBody = buildGeminiRequest(userId, systemPrompt);
                 String jsonBody = mapper.writeValueAsString(requestBody);
@@ -194,10 +182,18 @@ public class AgentLoopService {
                                 // Stick with exponential backoff
                             }
                             System.out.println("⏳ Rate limited (HTTP " + status + "). Waiting " + (waitTime / 1000) + "s... [Retry " + retries + "/" + MAX_RETRIES + "]");
-                            trace.add(new AgentResponse.TraceStep("⏳ Rate Limited (HTTP " + status + ")", "", "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0));
-                            Thread.sleep(waitTime);
-                            // Record the wait so rate tracker knows this key was recently attempted
-                            recordApiCall(currentKey);
+                            // Let the retry loop handle backoff — no early abort
+                            int totalKeys = (apiKeys != null) ? apiKeys.length : 1;
+                            boolean hasMoreKeysToTry = (totalKeys > 1) && (retries % totalKeys != 0);
+
+                            if (hasMoreKeysToTry) {
+                                System.out.println("🔄 Rate limited on current key. Switching API key immediately...");
+                                trace.add(new AgentResponse.TraceStep("🔄 Switching API Key", "", "Rate limit hit. Instant swap to backup key...", 0));
+                            } else {
+                                trace.add(new AgentResponse.TraceStep("⏳ Rate Limited (HTTP " + status + ")", "", "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0));
+                                Thread.sleep(waitTime);
+                                recordApiCall(currentKey);
+                            }
                         } else if (status == 404) {
                             String msg = "Model '" + MODEL_NAME + "' not found. Check https://ai.google.dev/gemini-api/docs/models for current models.";
                             System.out.println("🔴 " + msg);
@@ -243,45 +239,64 @@ public class AgentLoopService {
                     return response;
                 }
 
-                JsonNode firstPart = root.path("candidates").get(0).path("content").path("parts").get(0);
+                JsonNode partsArray = root.path("candidates").get(0).path("content").path("parts");
 
-                if (firstPart.has("functionCall")) {
-                    JsonNode funcCall = firstPart.path("functionCall");
-                    String toolName = funcCall.path("name").asText();
-                    Map<String, Object> toolArgs = mapper.convertValue(funcCall.path("args"), Map.class);
+                boolean madeToolCall = false;
+                List<Map<String, Object>> functionResponses = new ArrayList<>();
 
-                    long toolStart = System.currentTimeMillis();
-                    String toolResult = agentTool.executeTool(toolName, toolArgs);
+                for (JsonNode part : partsArray) {
+                    if (part.has("functionCall")) {
+                        madeToolCall = true;
+                        JsonNode funcCall = part.path("functionCall");
+                        String toolName = funcCall.path("name").asText();
+                        Map<String, Object> toolArgs = mapper.convertValue(funcCall.path("args"), Map.class);
 
-                    trace.add(new AgentResponse.TraceStep(
-                            getToolEmoji(toolName) + " " + toolName,
-                            mapper.writeValueAsString(toolArgs),
-                            truncate(toolResult, 250),
-                            duration + (System.currentTimeMillis() - toolStart)
-                    ));
+                        long toolStart = System.currentTimeMillis();
+                        String toolResult = agentTool.executeTool(toolName, toolArgs);
 
-                    historyService.addFunctionCall(userId, toolName, toolArgs);
+                        trace.add(new AgentResponse.TraceStep(
+                                getToolEmoji(toolName) + " " + toolName,
+                                mapper.writeValueAsString(toolArgs),
+                                truncate(toolResult, 250),
+                                duration + (System.currentTimeMillis() - toolStart)
+                        ));
 
-                    Object parsedResult;
-                    try { parsedResult = mapper.readValue(toolResult, Map.class); }
-                    catch (Exception e) { parsedResult = Map.of("text_result", toolResult); }
-                    historyService.addFunctionResponse(userId, toolName, parsedResult);
+                        historyService.addFunctionCall(userId, toolName, toolArgs);
 
-                    // (cooldown handled at top of loop — 14s between iterations)
+                        Object parsedResult;
+                        try { parsedResult = mapper.readValue(toolResult, Map.class); }
+                        catch (Exception e) { parsedResult = Map.of("text_result", toolResult); }
+                        
+                        functionResponses.add(Map.of("name", toolName, "response", Map.of("content", parsedResult)));
+                    }
+                }
 
+                if (madeToolCall) {
+                    // Send all function responses to history as a single message
+                    Map<String, Object> message = new HashMap<>();
+                    message.put("role", "user");
+                    List<Map<String, Object>> partsList = new ArrayList<>();
+                    for (Map<String, Object> fr : functionResponses) {
+                        partsList.add(Map.of("functionResponse", fr));
+                    }
+                    message.put("parts", partsList);
+                    historyService.getHistory(userId).add(message);
                     continue;
                 }
 
-                if (firstPart.has("text")) {
-                    String aiText = firstPart.path("text").asText();
-                    historyService.addModelTextResponse(userId, aiText);
-                    long totalElapsed = System.currentTimeMillis() - loopStartTime;
-                    trace.add(new AgentResponse.TraceStep("💬 Response", "", truncate(aiText, 150), duration));
-                    System.out.println("⚡ Agent loop completed in " + (totalElapsed / 1000.0) + "s (" + iterations + " iteration(s))");
-                    response.message = aiText;
-                    response.confidence = 100;
-                    response.trace = trace;
-                    return response;
+                // If no function calls, process text
+                for (JsonNode part : partsArray) {
+                    if (part.has("text")) {
+                        String aiText = part.path("text").asText();
+                        historyService.addModelTextResponse(userId, aiText);
+                        long totalElapsed = System.currentTimeMillis() - loopStartTime;
+                        trace.add(new AgentResponse.TraceStep("💬 Response", "", truncate(aiText, 150), duration));
+                        System.out.println("⚡ Agent loop completed in " + (totalElapsed / 1000.0) + "s (" + iterations + " iteration(s))");
+                        response.message = aiText;
+                        response.confidence = 100;
+                        response.trace = trace;
+                        return response;
+                    }
                 }
                 break;
             }
@@ -330,11 +345,7 @@ public class AgentLoopService {
             while (iterations < MAX_ITERATIONS) {
                 iterations++;
 
-                if (iterations > 1) {
-                    long cooldown = getCooldownMs();
-                    System.out.println("💤 [STREAM] Cooling down for " + (cooldown / 1000) + "s...");
-                    Thread.sleep(cooldown);
-                }
+                // Per-key rate limiter handles spacing — no extra cooldown needed
 
                 Map<String, Object> requestBody = buildGeminiRequest(userId, systemPrompt);
                 String jsonBody = mapper.writeValueAsString(requestBody);
@@ -395,13 +406,22 @@ public class AgentLoopService {
                             } catch (Exception parseEx) {
                                 // Stick with exponential backoff
                             }
-                            AgentResponse.TraceStep retryStep = new AgentResponse.TraceStep(
-                                    "⏳ Rate Limited (HTTP " + status + ")", "",
-                                    "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0);
-                            trace.add(retryStep);
-                            emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(retryStep)));
-                            Thread.sleep(waitTime);
-                            recordApiCall(currentKey);
+                            // Let the retry loop handle backoff — no early abort
+                            int totalKeys = (apiKeys != null) ? apiKeys.length : 1;
+                            boolean hasMoreKeysToTry = (totalKeys > 1) && (retries % totalKeys != 0);
+
+                            if (hasMoreKeysToTry) {
+                                System.out.println("🔄 [STREAM] Rate limited on current key. Switching API key immediately...");
+                                AgentResponse.TraceStep swapStep = new AgentResponse.TraceStep("🔄 Switching API Key", "", "Rate limit hit. Instant swap to backup key...", 0);
+                                trace.add(swapStep);
+                                emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(swapStep)));
+                            } else {
+                                AgentResponse.TraceStep retryStep = new AgentResponse.TraceStep("⏳ Rate Limited (HTTP " + status + ")", "", "Waiting " + (waitTime / 1000) + "s... Retry " + retries + "/" + MAX_RETRIES, 0);
+                                trace.add(retryStep);
+                                emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(retryStep)));
+                                Thread.sleep(waitTime);
+                                recordApiCall(currentKey);
+                            }
                         } else {
                             throw new RuntimeException("Gemini API error (HTTP " + status + "): " + truncate(body, 300));
                         }
@@ -426,50 +446,69 @@ public class AgentLoopService {
                     return;
                 }
 
-                JsonNode firstPart = root.path("candidates").get(0).path("content").path("parts").get(0);
+                JsonNode partsArray = root.path("candidates").get(0).path("content").path("parts");
 
-                if (firstPart.has("functionCall")) {
-                    JsonNode funcCall = firstPart.path("functionCall");
-                    String toolName = funcCall.path("name").asText();
-                    Map<String, Object> toolArgs = mapper.convertValue(funcCall.path("args"), Map.class);
+                boolean madeToolCall = false;
+                List<Map<String, Object>> functionResponses = new ArrayList<>();
 
-                    long toolStart = System.currentTimeMillis();
-                    String toolResult = agentTool.executeTool(toolName, toolArgs);
+                for (JsonNode part : partsArray) {
+                    if (part.has("functionCall")) {
+                        madeToolCall = true;
+                        JsonNode funcCall = part.path("functionCall");
+                        String toolName = funcCall.path("name").asText();
+                        Map<String, Object> toolArgs = mapper.convertValue(funcCall.path("args"), Map.class);
 
-                    AgentResponse.TraceStep traceStep = new AgentResponse.TraceStep(
-                            getToolEmoji(toolName) + " " + toolName,
-                            mapper.writeValueAsString(toolArgs),
-                            truncate(toolResult, 250),
-                            duration + (System.currentTimeMillis() - toolStart)
-                    );
-                    trace.add(traceStep);
+                        long toolStart = System.currentTimeMillis();
+                        String toolResult = agentTool.executeTool(toolName, toolArgs);
 
-                    // 🔥 Stream this trace step to the frontend immediately
-                    emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(traceStep)));
+                        AgentResponse.TraceStep traceStep = new AgentResponse.TraceStep(
+                                getToolEmoji(toolName) + " " + toolName,
+                                mapper.writeValueAsString(toolArgs),
+                                truncate(toolResult, 250),
+                                duration + (System.currentTimeMillis() - toolStart)
+                        );
+                        trace.add(traceStep);
 
-                    historyService.addFunctionCall(userId, toolName, toolArgs);
+                        // 🔥 Stream this trace step to the frontend immediately
+                        emitter.send(SseEmitter.event().name("trace").data(mapper.writeValueAsString(traceStep)));
 
-                    Object parsedResult;
-                    try { parsedResult = mapper.readValue(toolResult, Map.class); }
-                    catch (Exception e) { parsedResult = Map.of("text_result", toolResult); }
-                    historyService.addFunctionResponse(userId, toolName, parsedResult);
+                        historyService.addFunctionCall(userId, toolName, toolArgs);
 
+                        Object parsedResult;
+                        try { parsedResult = mapper.readValue(toolResult, Map.class); }
+                        catch (Exception e) { parsedResult = Map.of("text_result", toolResult); }
+                        
+                        functionResponses.add(Map.of("name", toolName, "response", Map.of("content", parsedResult)));
+                    }
+                }
+
+                if (madeToolCall) {
+                    Map<String, Object> message = new HashMap<>();
+                    message.put("role", "user");
+                    List<Map<String, Object>> partsList = new ArrayList<>();
+                    for (Map<String, Object> fr : functionResponses) {
+                        partsList.add(Map.of("functionResponse", fr));
+                    }
+                    message.put("parts", partsList);
+                    historyService.getHistory(userId).add(message);
                     continue;
                 }
 
-                if (firstPart.has("text")) {
-                    String aiText = firstPart.path("text").asText();
-                    historyService.addModelTextResponse(userId, aiText);
-                    long totalElapsed = System.currentTimeMillis() - loopStartTime;
-                    trace.add(new AgentResponse.TraceStep("💬 Response", "", truncate(aiText, 150), duration));
-                    System.out.println("⚡ [STREAM] Agent loop completed in " + (totalElapsed / 1000.0) + "s (" + iterations + " iteration(s))");
-                    response.message = aiText;
-                    response.confidence = 100;
-                    response.trace = trace;
+                for (JsonNode part : partsArray) {
+                    if (part.has("text")) {
+                        String aiText = part.path("text").asText();
+                        historyService.addModelTextResponse(userId, aiText);
+                        long totalElapsed = System.currentTimeMillis() - loopStartTime;
+                        trace.add(new AgentResponse.TraceStep("💬 Response", "", truncate(aiText, 150), duration));
+                        System.out.println("⚡ [STREAM] Agent loop completed in " + (totalElapsed / 1000.0) + "s (" + iterations + " iteration(s))");
+                        response.message = aiText;
+                        response.confidence = 100;
+                        response.trace = trace;
 
-                    emitter.send(SseEmitter.event().name("result").data(mapper.writeValueAsString(response)));
-                    emitter.complete();
-                    return;
+                        emitter.send(SseEmitter.event().name("result").data(mapper.writeValueAsString(response)));
+                        emitter.complete();
+                        return;
+                    }
                 }
                 break;
             }
@@ -502,7 +541,7 @@ public class AgentLoopService {
     }
 
     // ==================== HELPERS ====================
-    private static final int MAX_HISTORY_MESSAGES = 20;
+    private static final int MAX_HISTORY_MESSAGES = 10;
 
     /**
      * Safely trims conversation history to ensure it doesn't violate Gemini API constraints:
@@ -606,6 +645,14 @@ public class AgentLoopService {
                 • BALANCED: confidence>=0.6 → proceed; <0.6 or unknown → ask first.
                 • CONSERVATIVE: Always ask before ordering.
 
+                🧠 MEMORY-BASED ORDERING (HIGH PRIORITY):
+                - When the user requests a specific food type (e.g. "I want burger", "get me biryani"), you MUST:
+                  1. FIRST call get_order_history.
+                  2. Check if the history contains the EXACT food type they just requested (e.g. if they asked for a burger, look ONLY for past burger orders).
+                  3. If you find a matching past order for that specific food: Say e.g. "You ordered a burger from Burger King last time—should I go ahead with them again?"
+                  4. If they say NO, or if they have NEVER ordered that specific food before, then proceed to search_menu.
+                  CRITICAL: NEVER suggest a past order that doesn't match what the user is currently asking for (e.g. if they want a burger, do NOT suggest their past pizza order!).
+
                 CRITICAL RULES:
                 - ALWAYS respond to the user strictly in their preferred language: %s (Translate your final natural language response).
                 - On user confirmation ("yes"/"sure"/"go ahead"), complete the ENTIRE remaining workflow in ONE turn. Never pause mid-flow.
@@ -615,11 +662,13 @@ public class AgentLoopService {
                 1. search_menu (always pass userId)
                 2. If multiple restaurants found → rank_restaurants, present top options
                 3. Once items/restaurant selected:
-                   a. evaluate_coupons → pick best
-                   b. check_wallet → verify funds
-                   c. add_to_cart for EACH item requested, including any requested customizations
-                   d. checkout_cart with best coupon
-                   e. Report order confirmation
+                   a. FIRST call view_cart — if ANY old items exist from a previous order, call remove_from_cart for EACH old item to clear the cart. Only the NEW items the user just requested should be in the cart.
+                   b. evaluate_coupons → pick best
+                   c. check_wallet → verify funds
+                   d. If wallet balance is INSUFFICIENT: Calculate the shortfall amount and ASK the user: "Your balance is ₹X but the order costs ₹Y. Shall I add ₹Z to your wallet?" If they say yes, call add_money with the shortfall amount, then continue checkout.
+                   e. add_to_cart for EACH item requested, including any requested customizations
+                   f. checkout_cart with best coupon
+                   g. Report order confirmation
                    Do NOT pause between these steps.
 
                 SMART FEATURES:

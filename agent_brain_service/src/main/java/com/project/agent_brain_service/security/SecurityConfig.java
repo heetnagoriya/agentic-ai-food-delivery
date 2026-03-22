@@ -20,14 +20,10 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable()) // Disable CSRF for stateless APIs
-            .cors(cors -> cors.configure(http)) // Allow CORS
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/auth/**").permitAll() // Allow login/register
-                // We leave all other endpoints open locally or require auth depending on requirements.
-                // Since FakeSwiggyController expects `userId` as a request param, it's easily callable by Agent.
-                // We will protect /fake-swiggy endpoints but permit Agent endpoints.
-                .requestMatchers("/agent/**").permitAll() // Allow chatting without auth for now (or protect later)
-                .anyRequest().permitAll() // ⚠️ PROTOTYPE: For full protection change to .authenticated()
+                .requestMatchers("/agent/**").permitAll() // Allow chatting without auth for now
+                .anyRequest().permitAll() // ⚠️ PROTOTYPE
             )
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
@@ -35,4 +31,5 @@ public class SecurityConfig {
 
         return http.build();
     }
+
 }

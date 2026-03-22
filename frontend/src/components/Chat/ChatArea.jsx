@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import TypingIndicator from './TypingIndicator';
+import Logo from '../common/Logo';
 import './Chat.css';
 
 export default function ChatArea({ messages, isLoading, onSend }) {
@@ -16,24 +17,35 @@ export default function ChatArea({ messages, isLoading, onSend }) {
             <div className="chat-messages" id="chat-messages">
                 {messages.length === 0 && !isLoading && (
                     <div className="chat-empty-state" id="chat-empty-state">
-                        <div className="empty-icon">🍽️</div>
-                        <h3 className="empty-title">C.A.F.E. Agent</h3>
+                        <div className="empty-logo" style={{ marginBottom: "1rem" }}><Logo animate={true} size={64} /></div>
+                        <h1 className="empty-title">What can I get you?</h1>
                         <p className="empty-subtitle">
-                            I'm your autonomous food ordering agent. Tell me what you want
-                            and I'll search menus, compare prices, find the best deals,
-                            and place the order — all automatically.
+                            I'm your autonomous food agent. Tell me what you're craving 
+                            and I'll search menus, find the best deals, and place your order — all automatically.
                         </p>
                         <div className="empty-suggestions">
-                            <span className="empty-chip" onClick={() => onSend('I want pizza')}>🍕 I want pizza</span>
-                            <span className="empty-chip" onClick={() => onSend('Show me my wallet balance')}>💳 Wallet balance</span>
-                            <span className="empty-chip" onClick={() => onSend('What are the best deals today?')}>🎟️ Best deals</span>
-                            <span className="empty-chip" onClick={() => onSend('Order a dosa for me')}>🥘 Order dosa</span>
+                            <button className="empty-chip" onClick={() => onSend('I want pizza')}>
+                                <span className="empty-chip-icon">🍕</span>
+                                I want pizza
+                            </button>
+                            <button className="empty-chip" onClick={() => onSend('Show me my wallet balance')}>
+                                <span className="empty-chip-icon">💳</span>
+                                Wallet balance
+                            </button>
+                            <button className="empty-chip" onClick={() => onSend('What are the best deals today?')}>
+                                <span className="empty-chip-icon">🏷️</span>
+                                Best deals today
+                            </button>
+                            <button className="empty-chip" onClick={() => onSend('Order a dosa for me')}>
+                                <span className="empty-chip-icon">🥘</span>
+                                Order a dosa
+                            </button>
                         </div>
                     </div>
                 )}
 
                 {messages.map((msg) => (
-                    <ChatMessage key={msg.id} message={msg} />
+                    <ChatMessage key={msg.id} message={msg} onSend={onSend} />
                 ))}
 
                 {isLoading && <TypingIndicator />}

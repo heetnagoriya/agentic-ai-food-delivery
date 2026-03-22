@@ -15,7 +15,11 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbParti
 @NoArgsConstructor
 @DynamoDbBean
 public class UserProfile {
-    public String userId;
+    public String userId; // We will store email here for the DynamoDB Primary Key
+    public String name;
+    public String email;
+    public String password; // Store hashed password
+
     public Preferences preferences;
     public Budget budget;
     public OrderingBehavior orderingBehavior;
@@ -28,6 +32,9 @@ public class UserProfile {
 
     // 🆕 Restaurant-level preference scores (e.g., {"res_1": 0.95, "res_3": 0.7})
     public Map<String, Double> restaurantPreferences = new HashMap<>();
+
+    // 🆕 Onboarding: false = show setup wizard on first login
+    public boolean onboardingComplete = false;
 
     @DynamoDbPartitionKey
     public String getUserId() {

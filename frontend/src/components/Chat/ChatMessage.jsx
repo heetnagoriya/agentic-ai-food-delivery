@@ -1,108 +1,82 @@
 import { useState } from 'react';
+import AgentTrace from './AgentTrace';
+import GenerativeUI, { tryParseGenerativeUI } from './GenerativeUI';
+import Logo from '../common/Logo';
 
-function getStepColor(stepName) {
-    const name = stepName.toLowerCase();
-    if (name.includes('place_order') || name.includes('order')) return 'var(--accent-success)';
-    if (name.includes('response') || name.includes('💬')) return 'var(--accent-primary)';
-    return 'var(--text-secondary)';
+function formatMessage(text) {
+    if (!text) return '';
+    // Strip JSON code blocks for clean display (Generative UI handles them)
+    const cleaned = text.replace(/```json\s*[\s\S]*?```/g, '').trim();
+    if (!cleaned) return null;
+    return cleaned.split('\n').map((line, i) => {
+        if (!line.trim()) return <br key={i} />;
+        return <p key={i}>{line}</p>;
+    });
 }
 
-function TraceStep({ step, index }) {
-    const [expanded, setExpanded] = useState(false);
-
-    return (
-        <div
-            className="inline-trace-step"
-            style={{ animationDelay: `${index * 80}ms` }}
-        >
-            <div className="inline-trace-header" onClick={() => setExpanded(!expanded)}>
-                <span className="inline-trace-dot" style={{ background: getStepColor(step.step) }} />
-                <span className="inline-trace-name">{step.step}</span>
-                <span className="inline-trace-duration">{step.durationMs}ms</span>
-                <span className="inline-trace-chevron">{expanded ? '▾' : '▸'}</span>
-            </div>
-            {expanded && (
-                <div className="inline-trace-body">
-                    {step.input && (
-                        <div className="inline-trace-detail">
-                            <span className="inline-trace-label">Input</span>
-                            <pre className="inline-trace-pre">{step.input}</pre>
-                        </div>
-                    )}
-                    {step.output && (
-                        <div className="inline-trace-detail">
-                            <span className="inline-trace-label">Output</span>
-                            <pre className="inline-trace-pre">{step.output}</pre>
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-function InlineTrace({ trace, isStreaming }) {
-    const [open, setOpen] = useState(false);
-
-    // Auto-open trace during streaming so user sees live progress
-    const isOpen = open || isStreaming;
-
-    if (!trace || trace.length === 0) return null;
-
-    const totalMs = trace.reduce((sum, s) => sum + (s.durationMs || 0), 0);
-
-    return (
-        <div className="inline-trace">
-            <button className="inline-trace-toggle" onClick={() => setOpen(!isOpen)}>
-                <span className="inline-trace-toggle-icon">🧠</span>
-                <span className="inline-trace-toggle-text">
-                    {isOpen ? 'Hide' : 'View'} thinking
-                    {isStreaming && ' (live)'}
-                </span>
-                <span className="inline-trace-toggle-meta">
-                    {trace.length} step{trace.length !== 1 ? 's' : ''} · {totalMs}ms
-                    {isStreaming && ' ⟳'}
-                </span>
-            </button>
-            {isOpen && (
-                <div className="inline-trace-steps">
-                    {trace.map((step, i) => (
-                        <TraceStep key={i} step={step} index={i} />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-}
-
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, onSend }) {
     const isUser = message.role === 'user';
     const isStreaming = message.isStreaming && !message.text;
 
+    // Try to extract generative UI cards from AI responses
+    const genUICards = !isUser ? tryParseGenerativeUI(message.text) : null;
+    const formattedText = formatMessage(message.text);
+
     return (
-        <div
-            className={`chat-message ${isUser ? 'chat-message-user' : 'chat-message-ai'} message-fade-in`}
-            id={`message-${message.id}`}
-        >
-            {!isUser && <div className="message-avatar">🍽️</div>}
-            <div className="message-body">
-                {/* Show bubble only when there's text or we're not streaming */}
-                {(message.text || !message.isStreaming) && (
-                    <div className={`message-bubble ${isUser ? 'bubble-user' : 'bubble-ai'}`}>
-                        <div className="message-content">{message.text || (isStreaming ? 'Processing...' : '')}</div>
-                    </div>
+        <div className={`message-wrapper ${isUser ? 'user' : 'ai'}`} id={`message-${message.id}`}>
+            <div className="message-row">
+
+                {/* AI Avatar */}
+                {!isUser && (
+                    <div className="message-avatar ai-avatar" style={{ overflow: 'hidden' }}><Logo size={24} /></div>
                 )}
-                <div className="message-meta">
-                    <span className="message-time">{message.time}</span>
-                    {message.confidence != null && message.confidence > 0 && (
-                        <span className="message-confidence">{message.confidence}% confidence</span>
+
+                <div className="message-content">
+                    {/* Trace Terminal (AI only, above response) */}
+                    {!isUser && message.trace && message.trace.length > 0 && (
+                        <AgentTrace trace={message.trace} isStreaming={message.isStreaming} />
+                    )}
+
+                    {/* Message Text */}
+                    {(formattedText || isUser || isStreaming) && (
+                        <div className="message-bubble">
+                            {formattedText
+                                ? formattedText
+                                : (isStreaming
+                                    ? <span style={{ color: 'var(--text-dim)' }}>Processing your request…</span>
+                                    : ''
+                                )
+                            }
+                        </div>
+                    )}
+
+                    {/* Generative UI Cards */}
+                    {genUICards && (
+                        <GenerativeUI cards={genUICards} onSend={onSend} />
+                    )}
+
+                    {/* Meta */}
+                    {!isUser && !isStreaming && message.text && (
+                        <div className="message-meta" style={{ justifyContent: 'flex-start' }}>
+                            <span>{message.time}</span>
+                            {message.confidence > 0 && (
+                                <span className="confidence-chip">{message.confidence}% confidence</span>
+                            )}
+                        </div>
+                    )}
+
+                    {isUser && (
+                        <div className="message-meta" style={{ justifyContent: 'flex-end' }}>
+                            <span>{message.time}</span>
+                        </div>
                     )}
                 </div>
-                {!isUser && message.trace && (
-                    <InlineTrace trace={message.trace} isStreaming={message.isStreaming} />
+
+                {/* User Avatar */}
+                {isUser && (
+                    <div className="message-avatar user-avatar">👤</div>
                 )}
             </div>
         </div>
     );
 }
-

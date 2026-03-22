@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/fake-swiggy")
+@CrossOrigin(originPatterns = "*", allowCredentials = "true")
 public class FakeSwiggyController {
     @jakarta.annotation.PostConstruct
     public void seedDb() {
@@ -26,7 +27,7 @@ public class FakeSwiggyController {
 
 
     private static final List<Restaurant> RESTAURANTS = new ArrayList<>();
-    private static final Map<String, Order> ACTIVE_ORDERS = new HashMap<>();
+    private static final Map<String, Order> ACTIVE_ORDERS = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Map<String, UserWallet> WALLETS = new HashMap<>();
     private static final Map<String, Cart> CARTS = new HashMap<>();
     private static final Map<String, List<OrderHistoryEntry>> ORDER_HISTORY = new HashMap<>();
@@ -367,8 +368,16 @@ public class FakeSwiggyController {
                     wordMatched = true;
                     break;
                 }
-                // Levenshtein distance check (allow up to 2 edits)
-                int maxDist = qWord.length() <= 4 ? 1 : 2;
+                // Strict Levenshtein distance check to prevent unrelated matches (e.g. burger vs butter)
+                int maxDist;
+                if (qWord.length() <= 4) {
+                    maxDist = 0; // exact match required for short words like "naan", "coke"
+                } else if (qWord.length() <= 7) {
+                    maxDist = 1; // 1 typo allowed for "burger" -> "burgar"
+                } else {
+                    maxDist = 2; // 2 typos allowed for long words like "margherita"
+                }
+                
                 if (levenshteinDistance(qWord, sWord) <= maxDist) {
                     wordMatched = true;
                     break;
@@ -638,6 +647,7 @@ public class FakeSwiggyController {
             order.discountApplied = discount; 
             order.couponCode = couponCode;
             dbService.saveOrder(order);
+            ACTIVE_ORDERS.put(order.orderId, order);
             response.append("- Order ID: ").append(order.orderId).append(" (").append(item.itemName).append(")\n");
             
             history.add(new OrderHistoryEntry(order.orderId, item.itemName, item.restaurantId, item.restaurantName, item.getLineTotal(), couponCode, item.customizations, (food != null ? food.cuisine : "")));
@@ -789,6 +799,7 @@ public class FakeSwiggyController {
         newOrder.couponCode = couponCode;
 
         dbService.saveOrder(newOrder);
+        ACTIVE_ORDERS.put(newOrder.orderId, newOrder);
         
         // 🆕 Add to history
         UserOrderHistory userHistory = dbService.getHistory(userId);
@@ -876,14 +887,29 @@ public class FakeSwiggyController {
     // ================== WORLD STATE (for Dashboard) ==================
 
     @GetMapping("/world-state")
-    public Map<String, Object> getWorldState() {
+    public Map<String, Object> getWorldState(@RequestParam(required = false) String userId) {
         // Auto-update order statuses
         for (Order order : ACTIVE_ORDERS.values()) {
             order.status = order.calculateCurrentStatus();
         }
 
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("wallets", WALLETS);
+
+        if (userId != null) {
+            UserWallet realWallet = dbService.getWallet(userId);
+            if (realWallet != null) {
+                state.put("wallets", Map.of(userId, Map.of(
+                    "balance", realWallet.getBalance(),
+                    "transactionHistory", realWallet.getTransactionHistory() != null ? realWallet.getTransactionHistory() : java.util.List.of(),
+                    "userId", userId
+                )));
+            } else {
+                state.put("wallets", Map.of(userId, Map.of("balance", 0.0, "transactionHistory", java.util.List.of(), "userId", userId)));
+            }
+        } else {
+            state.put("wallets", WALLETS);
+        }
+
         state.put("restaurants", RESTAURANTS);
         state.put("active_orders", ACTIVE_ORDERS);
         state.put("surge_active", SURGE_ACTIVE);

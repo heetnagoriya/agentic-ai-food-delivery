@@ -18,7 +18,7 @@ public class StreamLambdaHandler implements RequestStreamHandler {
         try {
             // Initialize the Spring Boot container
             handler = SpringBootLambdaContainerHandler.getAwsProxyHandler(AgentBrainServiceApplication.class);
-            // Optionally, we can set up profiles here
+
         } catch (ContainerInitializationException e) {
             e.printStackTrace();
             throw new RuntimeException("Could not initialize Spring Boot application", e);

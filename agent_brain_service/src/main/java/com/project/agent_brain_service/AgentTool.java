@@ -1,6 +1,7 @@
 package com.project.agent_brain_service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.project.agent_brain_service.controller.FakeSwiggyController;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,10 @@ public class AgentTool {
     @Autowired
     private UserProfileService userProfileService;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    @Autowired
+    private com.project.agent_brain_service.service.DynamoDbService dbService;
+
+    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     // ==================== TOOL DISPATCHER ====================
 
@@ -37,6 +41,7 @@ public class AgentTool {
             return switch (name) {
                 case "search_menu" -> toolSearchMenu(args);
                 case "check_wallet" -> toolCheckWallet(args);
+                case "add_money" -> toolAddMoney(args);
                 case "place_order" -> toolPlaceOrder(args);
                 case "get_reviews" -> toolGetReviews(args);
                 case "evaluate_coupons" -> toolEvaluateCoupons(args);
@@ -101,6 +106,31 @@ public class AgentTool {
                 "userId", userId,
                 "balance", balance,
                 "recent_transactions", recentTransactions
+        ));
+    }
+
+    private String toolAddMoney(Map<String, Object> args) throws Exception {
+        String userId = getStringArg(args, "userId", "user_123");
+        double amount = ((Number) args.getOrDefault("amount", 0.0)).doubleValue();
+        
+        if (amount <= 0) {
+            return "❌ ERROR: Amount to add must be greater than zero.";
+        }
+        
+        UserWallet wallet = swiggy.getWallet(userId);
+        if (wallet == null) {
+            return "❌ ERROR: Wallet not found for user: " + userId;
+        }
+        
+        wallet.addFunds(amount, "Agent added funds");
+        dbService.saveWallet(wallet);
+        
+        return mapper.writeValueAsString(Map.of(
+                "userId", userId,
+                "added_amount", amount,
+                "new_balance", wallet.balance,
+                "status", "SUCCESS",
+                "message", "Successfully added ₹" + amount + " to wallet."
         ));
     }
 
@@ -266,6 +296,17 @@ public class AgentTool {
                 List.of("userId")
         ));
 
+        // 2b. add_money
+        declarations.add(makeDeclaration(
+                "add_money",
+                "Add money to the user's wallet. Only use this if the user explicitly asks to add money or add funds. DO NOT add money automatically without permission.",
+                orderedMap(
+                        "userId", propString("The user ID to add money to (e.g., 'user_123')"),
+                        "amount", propNumber("The amount of money to add to the wallet (e.g., 500)")
+                ),
+                List.of("userId", "amount")
+        ));
+
         // 3. place_order
         declarations.add(makeDeclaration(
                 "place_order",
@@ -419,6 +460,13 @@ public class AgentTool {
     private Map<String, Object> propString(String description) {
         Map<String, Object> prop = new LinkedHashMap<>();
         prop.put("type", "STRING");
+        prop.put("description", description);
+        return prop;
+    }
+
+    private Map<String, Object> propNumber(String description) {
+        Map<String, Object> prop = new LinkedHashMap<>();
+        prop.put("type", "NUMBER");
         prop.put("description", description);
         return prop;
     }

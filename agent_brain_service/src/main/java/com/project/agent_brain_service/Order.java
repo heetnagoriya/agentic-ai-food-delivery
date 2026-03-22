@@ -89,13 +89,11 @@ public class Order {
         if (isCancelled) return "CANCELLED";
 
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = 30L; // Fast prototype progression
-        double progress = (double) elapsedSeconds / totalSeconds;
 
-        if (progress >= 0.9)      return "DELIVERED";
-        else if (progress >= 0.5) return "OUT_FOR_DELIVERY";
-        else if (progress >= 0.2) return "PREPARING";
-        else                      return "PLACED";
+        if (elapsedSeconds >= 50)     return "DELIVERED";
+        else if (elapsedSeconds >= 30) return "OUT_FOR_DELIVERY";
+        else if (elapsedSeconds >= 15)  return "PREPARING";
+        else                           return "PLACED";
     }
 
     /**
@@ -105,11 +103,12 @@ public class Order {
         if (isCancelled) return new double[]{restaurantLat, restaurantLng};
 
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = 30L; // Fast prototype progression
-        double progress = Math.min(1.0, (double) elapsedSeconds / totalSeconds);
 
-        // Only start moving after 50% (OUT_FOR_DELIVERY phase)
-        double moveProgress = progress < 0.5 ? 0.0 : (progress - 0.5) / 0.5;
+        // Only start moving after 30s (OUT_FOR_DELIVERY phase)
+        double moveProgress = 0.0;
+        if (elapsedSeconds >= 30) {
+             moveProgress = (double)(elapsedSeconds - 30) / 20.0;
+        }
         moveProgress = Math.min(1.0, moveProgress);
 
         double lat = restaurantLat + (userLat - restaurantLat) * moveProgress;
@@ -123,8 +122,8 @@ public class Order {
     public int getEstimatedMinutesRemaining() {
         if (isCancelled) return 0;
         long elapsedSeconds = ChronoUnit.SECONDS.between(orderTime, LocalDateTime.now());
-        long totalSeconds = 30L; // Fast prototype progression
-        long remaining = (totalSeconds - elapsedSeconds) / 60;
-        return (int) Math.max(0, remaining);
+        long remainingSeconds = 60L - elapsedSeconds;
+        int remainingMins = (int) Math.ceil(remainingSeconds / 60.0);
+        return Math.max(0, remainingMins);
     }
 }

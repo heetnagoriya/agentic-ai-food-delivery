@@ -43,4 +43,9 @@ public class UserWallet {
         balance += amount;
         transactionHistory.add("REFUND: ₹" + amount + " for " + reason);
     }
+
+    public void addFunds(double amount, String reason) {
+        balance += amount;
+        transactionHistory.add("CREDIT: ₹" + amount + " for " + reason + ". Bal: ₹" + balance);
+    }
 }

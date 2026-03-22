@@ -10,6 +10,11 @@ Globals:
     Environment:
       Variables:
         SPRING_PROFILES_ACTIVE: aws
+  Api:
+    Cors:
+      AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key'"
+      AllowOrigin: "'*'"
 
 Resources:
   # === DYNAMODB TABLES ===
@@ -91,7 +96,7 @@ Resources:
     Properties:
       Handler: com.project.agent_brain_service.StreamLambdaHandler::handleRequest
       Runtime: java17
-      CodeUri: .
+      CodeUri: target/agent-brain-service-0.0.1-SNAPSHOT-jar-with-dependencies.jar
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref FoodDeliveryUsersTable

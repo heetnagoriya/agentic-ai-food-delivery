@@ -19,11 +19,11 @@ export function getAuthHeaders() {
   return token ? { 'Authorization': `Bearer ${token}` } : {};
 }
 
-export async function loginWithApi(username, password) {
+export async function loginWithApi(email, password) {
   const res = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ username, password })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
   });
   if (!res.ok) throw new Error(`Login failed: ${res.statusText}`);
   const data = await res.json();
@@ -31,25 +31,50 @@ export async function loginWithApi(username, password) {
   return data;
 }
 
-export async function registerWithApi(username, password) {
-  const res = await fetch(`${BASE_URL}/auth/register`, {
+export async function googleLoginApi(credential) {
+  const res = await fetch(`${BASE_URL}/auth/google`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ username, password })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential })
   });
   if (!res.ok) {
-     const errText = await res.text();
-     throw new Error(`Register failed: ${errText}`);
+    const errText = await res.text();
+    throw new Error(`Google Login failed: ${errText}`);
   }
   const data = await res.json();
   setAuthToken(data.jwt, data.userId);
   return data;
 }
 
+export async function sendOtpApi(email) {
+  const res = await fetch(`${BASE_URL}/auth/send-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to send OTP: ${errText}`);
+  }
+  return await res.json();
+}
 
-/**
- * Original synchronous API call — kept as fallback.
- */
+export async function registerWithApi(name, email, password, otp) {
+  const res = await fetch(`${BASE_URL}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password, otp })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Register failed: ${errText}`);
+  }
+  const data = await res.json();
+  setAuthToken(data.jwt, data.userId);
+  return data;
+}
+
+/** Synchronous agent ask with 120s timeout */
 export async function askAgent(userId, question) {
   const params = new URLSearchParams({ userId, question });
   const controller = new AbortController();
@@ -66,31 +91,20 @@ export async function askAgent(userId, question) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      throw new Error('Request timed out after 120 seconds. The AI agent may be processing a complex request.');
+      throw new Error('Request timed out. The AI is processing a complex request.');
     }
     throw err;
   }
 }
 
-/**
- * SSE streaming API — receives trace steps in real-time.
- * @param {string} userId
- * @param {string} question
- * @param {Function} onTrace  - called with each TraceStep object as it arrives
- * @param {Function} onResult - called with the final AgentResponse
- * @param {Function} onError  - called with an error message string
- * @returns {Function} abort function to cancel the stream
- */
+/** SSE streaming agent ask — used on localhost */
 export function askAgentStream(userId, question, onTrace, onResult, onError) {
   const params = new URLSearchParams({ userId, question });
   const controller = new AbortController();
 
-  // Use fetch + ReadableStream because EventSource only supports GET without custom headers
   fetch(`${BASE_URL}/ask/stream?${params}`, { signal: controller.signal, headers: getAuthHeaders() })
     .then((res) => {
-      if (!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -99,81 +113,48 @@ export function askAgentStream(userId, question, onTrace, onResult, onError) {
       function processChunk() {
         reader.read().then(({ done, value }) => {
           if (done) return;
-
           buffer += decoder.decode(value, { stream: true });
-
-          // SSE format: "event: <name>\ndata: <json>\n\n"
           const events = buffer.split('\n\n');
-          // Keep the last incomplete chunk in the buffer
           buffer = events.pop() || '';
 
           for (const event of events) {
             if (!event.trim()) continue;
-
             const lines = event.split('\n');
-            let eventName = '';
-            let eventData = '';
-
+            let eventName = '', eventData = '';
             for (const line of lines) {
-              if (line.startsWith('event:')) {
-                eventName = line.slice(6).trim();
-              } else if (line.startsWith('data:')) {
-                eventData = line.slice(5).trim();
-              }
+              if (line.startsWith('event:')) eventName = line.slice(6).trim();
+              else if (line.startsWith('data:')) eventData = line.slice(5).trim();
             }
-
             if (!eventData) continue;
-
             try {
               const parsed = JSON.parse(eventData);
-
-              if (eventName === 'trace') {
-                onTrace(parsed);
-              } else if (eventName === 'result') {
-                onResult(parsed);
-              } else if (eventName === 'error') {
-                onError(typeof parsed === 'string' ? parsed : JSON.stringify(parsed));
-              }
-            } catch (parseErr) {
-              // If data isn't valid JSON, treat it as a string (error messages)
-              if (eventName === 'error') {
-                onError(eventData);
-              }
+              if (eventName === 'trace') onTrace(parsed);
+              else if (eventName === 'result') onResult(parsed);
+              else if (eventName === 'error') onError(typeof parsed === 'string' ? parsed : JSON.stringify(parsed));
+            } catch {
+              if (eventName === 'error') onError(eventData);
             }
           }
-
           processChunk();
-        }).catch((err) => {
-          if (err.name !== 'AbortError') {
-            onError(err.message || 'Stream read error');
-          }
-        });
+        }).catch((err) => { if (err.name !== 'AbortError') onError(err.message); });
       }
-
       processChunk();
     })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        onError(err.message || 'Failed to connect to streaming endpoint');
-      }
-    });
+    .catch((err) => { if (err.name !== 'AbortError') onError(err.message || 'Failed to connect'); });
 
-  // Return abort function
   return () => controller.abort();
 }
 
-export async function getWorldState() {
-  const res = await fetch(`${BASE_URL}/fake-swiggy/world-state`, { headers: getAuthHeaders() });
+export async function getWorldState(userId) {
+  const params = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+  const res = await fetch(`${BASE_URL}/fake-swiggy/world-state${params}`, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch world state: ${res.status}`);
   return await res.json();
 }
 
 export async function resetUser(userId) {
   const params = new URLSearchParams({ userId });
-  const res = await fetch(`${BASE_URL}/user/reset?${params}`, {
-    headers: getAuthHeaders(),
-    method: 'DELETE',
-  });
+  const res = await fetch(`${BASE_URL}/user/reset?${params}`, { headers: getAuthHeaders(), method: 'DELETE' });
   if (!res.ok) throw new Error(`Failed to reset user: ${res.status}`);
   return true;
 }
@@ -198,10 +179,7 @@ export async function updateUserProfile(userId, profileData) {
 
 export async function toggleSurge(enable) {
   const endpoint = enable ? 'on' : 'off';
-  const res = await fetch(`${BASE_URL}/fake-swiggy/surge/${endpoint}`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(`${BASE_URL}/fake-swiggy/surge/${endpoint}`, { method: 'POST', headers: getAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to toggle surge: ${res.status}`);
   return await res.text();
 }
@@ -223,5 +201,62 @@ export async function getOrderHistory(userId) {
   const params = new URLSearchParams({ userId });
   const res = await fetch(`${BASE_URL}/fake-swiggy/history?${params}`, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch order history: ${res.status}`);
+  return await res.json();
+}
+
+// ============ NEW: Chat History ============
+
+export async function getChatHistory(userId) {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${BASE_URL}/api/chat/history?${params}`, { headers: getAuthHeaders() });
+  if (!res.ok) return [];
+  return await res.json();
+}
+
+export async function clearChatHistory(userId) {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${BASE_URL}/api/chat/history?${params}`, { method: 'DELETE', headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to clear chat history');
+  return await res.json();
+}
+
+// ============ NEW: Onboarding ============
+
+export async function getOnboardingStatus(userId) {
+  const params = new URLSearchParams({ userId });
+  const res = await fetch(`${BASE_URL}/api/onboarding/status?${params}`, { headers: getAuthHeaders() });
+  if (!res.ok) return { onboardingComplete: false };
+  return await res.json();
+}
+
+export async function completeOnboarding(data) {
+  const res = await fetch(`${BASE_URL}/api/onboarding/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to save onboarding preferences');
+  return await res.json();
+}
+
+// ============ NEW: Stripe Payments ============
+
+export async function createStripeCheckout(userId, amount) {
+  const res = await fetch(`${BASE_URL}/api/payments/create-checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ userId, amount })
+  });
+  if (!res.ok) throw new Error('Failed to create payment session');
+  return await res.json();
+}
+
+export async function verifyStripePayment(sessionId, userId, amount) {
+  const res = await fetch(`${BASE_URL}/api/payments/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ sessionId, userId, amount: Number(amount) })
+  });
+  if (!res.ok) throw new Error('Failed to verify payment');
   return await res.json();
 }
